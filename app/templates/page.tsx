@@ -1,7 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
-import Link from 'next/link';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Header } from '@/components/Header';
 import { Footer } from '@/components/Footer';
@@ -9,653 +8,2442 @@ import { useLanguage } from '@/components/LanguageContext';
 import { useSession, useSavedDocsList, logoutAccount } from '@/lib/guest-session';
 import { useTheme } from '@/lib/theme';
 import {
-  Search,
-  Copy,
-  Check,
-  FileText,
-  ExternalLink,
-  X,
-  Layers,
-  Sparkles,
-  ArrowRight,
-  GraduationCap,
-  Briefcase,
-  TrendingUp,
-  Wrench,
-  Code2,
-  Building,
-  Target,
-  Calendar,
-  FileCheck,
-  Monitor,
-  Rocket,
-  FolderKanban,
-  FileUser,
-  Palette,
-  Mail,
+  Search, Copy, Check, FileText, Eye, X, ArrowRight,
+  Star, Download, Sparkles, Layers,
 } from 'lucide-react';
 
+/* ═══════════════════════════════════════════════════════════
+   Types
+   ═══════════════════════════════════════════════════════════ */
 interface TemplateItem {
   id: string;
   icon: string;
   category: string;
+  tags: string[];
   name: { ar: string; en: string };
   desc: { ar: string; en: string };
-  markdown: { ar: string; en: string };
+  markdown: { ar: string; en?: string };
 }
 
+/* ═══════════════════════════════════════════════════════════
+   Category labels
+   ═══════════════════════════════════════════════════════════ */
+const CAT_LABELS: Record<string, { ar: string; en: string }> = {
+  all:           { ar: 'الكل',        en: 'All' },
+  favorites:     { ar: '⭐ المفضلة',  en: '⭐ Favorites' },
+  academic:      { ar: 'أكاديمي',     en: 'Academic' },
+  engineering:   { ar: 'هندسة',       en: 'Engineering' },
+  tech:          { ar: 'حاسوب/تقنية', en: 'Tech' },
+  medical:       { ar: 'طبي/صحي',     en: 'Medical' },
+  business:      { ar: 'أعمال',       en: 'Business' },
+  reports:       { ar: 'تقارير',      en: 'Reports' },
+  research:      { ar: 'بحث',         en: 'Research' },
+  law:           { ar: 'قانون',       en: 'Law' },
+  education:     { ar: 'تربية/تعليم', en: 'Education' },
+  media:         { ar: 'إعلام',       en: 'Media' },
+  architecture:  { ar: 'عمارة',       en: 'Architecture' },
+  science:       { ar: 'علوم',        en: 'Science' },
+  pm:            { ar: 'إدارة مشاريع',en: 'Project Mgmt' },
+  ops:           { ar: 'تشغيل',       en: 'Operations' },
+  analysis:      { ar: 'تحليل',       en: 'Analysis' },
+  entrepreneur:  { ar: 'ريادة',       en: 'Entrepreneur' },
+  projects:      { ar: 'مشاريع',      en: 'Projects' },
+  jobs:          { ar: 'وظائف',       en: 'Jobs' },
+  events:        { ar: 'فعاليات',     en: 'Events' },
+  presentations: { ar: 'عروض',        en: 'Presentations' },
+};
+
+/* ═══════════════════════════════════════════════════════════
+   Helpers
+   ═══════════════════════════════════════════════════════════ */
+function pickName(t: TemplateItem, lang: string): string {
+  return (lang === 'en' && t.name.en) ? t.name.en : t.name.ar;
+}
+function pickDesc(t: TemplateItem, lang: string): string {
+  return (lang === 'en' && t.desc.en) ? t.desc.en : t.desc.ar;
+}
+function pickMarkdown(t: TemplateItem, lang: string): string {
+  return (lang === 'en' && t.markdown.en) ? t.markdown.en : t.markdown.ar;
+}
+
+/* Markdown → HTML */
+function mdToHtml(md: string): string {
+  if (!md) return '';
+  let html = md.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+  html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>');
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  html = html.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
+  html = html.replace(/^---$/gm, '<hr>');
+  html = html.replace(/((?:^\|.*\|\s*$\n?)+)/gm, (block) => {
+    const lines = block.trim().split('\n').map((l) => l.trim());
+    if (lines.length < 2) return block;
+    const header = lines[0].split('|').slice(1, -1).map((c) => c.trim());
+    const body = lines.slice(2);
+    let t = '<table><thead><tr>' + header.map((h) => `<th>${h}</th>`).join('') + '</tr></thead><tbody>';
+    body.forEach((row) => {
+      const cells = row.split('|').slice(1, -1).map((c) => c.trim());
+      t += '<tr>' + cells.map((c) => `<td>${c}</td>`).join('') + '</tr>';
+    });
+    return t + '</tbody></table>';
+  });
+  html = html.replace(/^[*\-] (.+)$/gm, '<li>$1</li>');
+  html = html.replace(/^\d+\. (.+)$/gm, '<li data-ordered="1">$1</li>');
+  html = html.replace(/((?:<li[^>]*>[\s\S]*?<\/li>\n?)+)/g, (block) => {
+    if (/data-ordered="1"/.test(block)) {
+      return '<ol>' + block.replace(/ data-ordered="1"/g, '') + '</ol>';
+    }
+    return '<ul>' + block + '</ul>';
+  });
+  html = html.split(/\n{2,}/).map((p) => {
+    p = p.trim();
+    if (!p) return '';
+    if (/^<(h\d|table|blockquote|hr|ul|ol|div|pre)/i.test(p)) return p;
+    return '<p>' + p.replace(/\n/g, '<br>') + '</p>';
+  }).join('\n');
+  return html;
+}
+
+/* Load html-docx-js from CDN on demand */
+function ensureHtmlDocx(): Promise<any> {
+  return new Promise((resolve, reject) => {
+    if (typeof window === 'undefined') return reject(new Error('SSR'));
+    if ((window as any).htmlDocx) return resolve((window as any).htmlDocx);
+    const existing = document.querySelector('script[data-html-docx]') as HTMLScriptElement | null;
+    if (existing) {
+      const id = setInterval(() => {
+        if ((window as any).htmlDocx) { clearInterval(id); resolve((window as any).htmlDocx); }
+      }, 100);
+      return;
+    }
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/html-docx-js/dist/html-docx.min.js';
+    s.setAttribute('data-html-docx', '1');
+    s.onload = () => resolve((window as any).htmlDocx);
+    s.onerror = () => reject(new Error('Failed to load html-docx-js'));
+    document.head.appendChild(s);
+  });
+}
+
+function triggerDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+const FAV_KEY = 'midadd.templates.favs';
+
+/* ═══════════════════════════════════════════════════════════
+   33 Templates
+   ═══════════════════════════════════════════════════════════ */
 const TEMPLATES_LIST: TemplateItem[] = [
+  /* ── 1. مشروع تخرج ── */
   {
-    id: 'graduation',
-    icon: '🎓',
-    category: 'academic',
-    name: { ar: 'مشروع تخرج جامعي', en: 'Graduation Project' },
+    id: 'graduation', icon: '🎓', category: 'academic', tags: ['تخرج', 'بحث', 'جامعة'],
+    name: { ar: 'مشروع تخرج جامعي (مفصّل)', en: 'Graduation Project (Detailed)' },
     desc: {
-      ar: 'غلاف → إهداء → شكر → ملخص → فهرس → مقدمة → مشكلة → أهداف → أسئلة → فروض → حدود → دراسات سابقة → منهجية → نتائج → توصيات',
-      en: 'Cover → Dedication → Abstract → TOC → Intro → Problem → Objectives → Hypotheses → Literature → Methodology → Results → Recommendations',
+      ar: 'قالب كامل من الغلاف إلى الملاحق — مع جداول وفهرس تلقائي وتعليمات لكل قسم.',
+      en: 'Complete template from cover to appendices, with auto TOC and section instructions.',
     },
     markdown: {
-      ar: `# مشروع تخرج جامعي
+      ar: `# [عنوان مشروع التخرج]
 
-**العنوان:** [أدخل عنوان المشروع هنا]
-**إعداد الطالب:** [اسم الطالب] — الرقم الجامعي: [XXXXXXX]
-**إشراف:** الدكتور [اسم المشرف]
-**الجامعة:** [اسم الجامعة] — قسم [اسم القسم]
-**العام الجامعي:** 2025 / 2026
+**الجامعة:** [اسم الجامعة]
+**الكلية:** [اسم الكلية]
+**القسم:** [اسم القسم]
+**اسم الطالب:** [الاسم الرباعي]
+**الرقم الجامعي:** [xxxxxxx]
+**المشرف:** [د. اسم المشرف]
+**السنة الدراسية:** [1446هـ - 2025م]
+**الفصل الدراسي:** [الفصل الأول/الثاني]
 
 ---
 
-## 1. الإهداء
-إلى كل من أنار دربنا بالعلم والمعرفة، وإلى والدينا الكرام الذين لم يدخروا جهداً في دعمنا.
+## الإهداء
 
-## 2. الشكر والتقدير
-نتقدم بخالص الشكر والتقدير إلى أستاذنا المشرف وإلى أعضاء هيئة التدريس في الكلية.
+> [اكتب إهداءك هنا — جملة أو جملتان تُهدي فيهما العمل لوالديك أو لشخص عزيز.]
 
-## 3. الملخص
-يهدف هذا المشروع إلى دراسة وتطوير نظام متكامل لحل مشكلة [اسم المشكلة]، معتمداً على منهجية علمية رصينة وأحدث التقنيات البرمجية.
+---
 
-## 4. مشكلة البحث وأهميته
-- **بيان المشكلة:** تواجه المؤسسات صعوبات في معالجة البيانات بسرعة ودقة.
-- **أهمية البحث:** المساهمة في تقليص التكلفة التشغيلية بنسبة 35% وزيادة الكفاءة.
+## الشكر والتقدير
 
-## 5. أهداف المشروع
-1. تصميم معمارية برمجية مرنة قابلة للتوسع.
-2. تطوير واجهات مستخدم متجاوبة تدعم اللغة العربية.
-3. قياس أداء النظام ومقارنته بالحلول القائمة.
+> [اشكر الله أولًا، ثم المشرف، ثم أعضاء اللجنة، ثم من ساعدك.]
 
-## 6. المنهجية والأدوات
-- **المنهج المستخدم:** منهج تطوير البرمجيات السريع (Agile Scrum).
-- **أدوات التطوير:** React, Next.js, Node.js, PostgreSQL.
+---
 
-## 7. النتائج والتوصيات
-- **أهم النتائج:** نجاح الاختبارات الوظيفية بنسبة 98%.
-- **التوصيات:** التوسع في إضافة تقنيات الذكاء الاصطناعي في المراحل القادمة.
-`,
-      en: `# Graduation Project Report
+## ملخص المشروع (Abstract)
 
-**Project Title:** [Insert Project Title Here]
-**Student:** [Student Name] — Student ID: [XXXXXXX]
+[اكتب 150-250 كلمة تشرح: ما موضوع المشروع؟ ما المشكلة؟ ماذا فعلت؟ ما أهم النتائج؟]
+
+**الكلمات المفتاحية:** [كلمة1]، [كلمة2]، [كلمة3]، [كلمة4]
+
+---
+
+## الفهرس
+
+| # | العنوان | الصفحة |
+|---|---------|--------|
+| 1 | المقدمة | |
+| 2 | مشكلة البحث | |
+| 3 | أهداف البحث | |
+| 4 | أسئلة البحث | |
+| 5 | فروض البحث | |
+| 6 | حدود البحث | |
+| 7 | الدراسات السابقة | |
+| 8 | منهجية البحث | |
+| 9 | النتائج | |
+| 10 | المناقشة | |
+| 11 | التوصيات | |
+| 12 | المراجع | |
+| 13 | الملاحق | |
+
+---
+
+## 1. المقدمة
+
+[اكتب المقدمة في 2-3 فقرات: تمهيد عام عن الموضوع، أهميته، ثم ماذا ستقدم في هذا المشروع.]
+
+---
+
+## 2. مشكلة البحث
+
+**السؤال الرئيسي:** [ما المشكلة التي يحلها بحثك؟]
+
+**المشكلة بصياغة أكاديمية:**
+[اكتب المشكلة في 3-4 أسطر: "تتمثل المشكلة في..."]
+
+**أهمية المشكلة:**
+- [النقطة الأولى]
+- [النقطة الثانية]
+- [النقطة الثالثة]
+
+---
+
+## 3. أهداف البحث
+
+1. [الهدف الأول — مثال: التعرف على...]
+2. [الهدف الثاني — مثال: تحليل...]
+3. [الهدف الثالث — مثال: تقديم توصيات حول...]
+
+---
+
+## 4. أسئلة البحث
+
+1. [سؤال رئيسي: ما...؟]
+2. [سؤال فرعي: كيف...؟]
+3. [سؤال فرعي: ما مدى...؟]
+
+---
+
+## 5. فروض البحث
+
+| # | الفرض | نتيجة التحقق |
+|---|-------|--------------|
+| 1 | [يوجد علاقة ذات دلالة إحصائية بين ... و ...] | ☐ مقبول ☐ مرفوض |
+| 2 | [يوجد أثر لـ ... في ...] | ☐ مقبول ☐ مرفوض |
+
+---
+
+## 6. حدود البحث
+
+- **الحدود الموضوعية:** [مثال: يقتصر البحث على ...]
+- **الحدود المكانية:** [مثال: تم تطبيق الدراسة على ...]
+- **الحدود الزمانية:** [من تاريخ ... إلى تاريخ ...]
+- **الحدود البشرية:** [عينة الدراسة ...]
+
+---
+
+## 7. الدراسات السابقة
+
+### 7.1 دراسة [اسم الباحث] ([السنة])
+- **عنوانها:** [...]
+- **هدفها:** [...]
+- **المنهج:** [...]
+- **النتائج:** [...]
+- **أوجه الشبه والاختلاف:** [...]
+
+### 7.2 دراسة [اسم الباحث] ([السنة])
+- **عنوانها:** [...]
+- **هدفها:** [...]
+- **المنهج:** [...]
+- **النتائج:** [...]
+
+---
+
+## 8. منهجية البحث
+
+- **المنهج المستخدم:** [الوصفي / التجريبي / التحليلي / المختلط]
+- **مجتمع الدراسة:** [وصف المجتمع]
+- **عينة الدراسة:** [الحجم وطريقة السحب]
+- **أداة البحث:** [استبانة / مقابلة / ملاحظة / اختبار]
+- **أدوات التحليل الإحصائي:** [SPSS / Excel / Python / R]
+- **الثبات والصدق:** [Cronbach's Alpha = 0.xx]
+
+---
+
+## 9. النتائج
+
+### 9.1 نتائج تحليل البيانات الوصفية
+
+| المتغير | العدد | النسبة % |
+|---------|-------|----------|
+| [فئة 1] | | |
+| [فئة 2] | | |
+
+### 9.2 نتائج الفروض
+
+**الفرض الأول:**
+- القيمة الاحتمالية (p-value) = [0.0xx]
+- النتيجة: [مقبول/مرفوض] عند مستوى دلالة 0.05
+
+---
+
+## 10. مناقشة النتائج
+
+[تفسير النتائج وربطها بالدراسات السابقة.]
+
+---
+
+## 11. التوصيات
+
+1. **[التوصية الأولى]** — الجهة المستفيدة: [المؤسسات / الطلاب / صناع القرار]
+2. **[التوصية الثانية]** — ...
+3. **[التوصية الثالثة]** — ...
+
+---
+
+## 12. المراجع
+
+### المراجع العربية
+1. [اسم العائلة، الاسم الأول]. ([السنة]). *[عنوان الكتاب]*. [الناشر]. [المدينة].
+
+### المراجع الأجنبية
+1. [Last, First]. ([Year]). *[Title]*. [Publisher]. [City].
+
+---
+
+## 13. الملاحق
+
+### ملحق أ: الاستبانة
+### ملحق ب: أدوات القياس
+### ملحق ج: بيانات إضافية`,
+      en: `# [Graduation Project Title]
+
+**University:** [University Name]
+**Faculty:** [Faculty Name]
+**Department:** [Department]
+**Student:** [Full Name] — ID: [xxxxxxx]
 **Supervisor:** Dr. [Supervisor Name]
-**University:** [University Name] — Department of [Department Name]
 **Academic Year:** 2025 / 2026
 
 ---
 
-## 1. Dedication
-Dedicated to our families, professors, and mentors who supported us along this journey.
+## Dedication
+> [Write your dedication here.]
 
-## 2. Abstract
-This project presents the design and implementation of a scalable software system addressing [Domain Problem], achieving high throughput and seamless user experience.
+## Acknowledgements
+> [Thank Allah, then your supervisor, committee, and supporters.]
 
-## 3. Problem Statement & Objectives
-- **Problem:** Legacy systems suffer from manual bottlenecks and lack of real-time validation.
-- **Primary Objectives:** Build an automated end-to-end workflow reducing processing time by 40%.
+## Abstract
+[150–250 words covering the problem, methodology, main results, and recommendations.]
 
-## 4. Methodology & Architecture
-- **Methodology:** Agile Scrum framework.
-- **Tech Stack:** TypeScript, Next.js, PostgreSQL, Tailwind CSS.
+## 1. Introduction
+[Two to three paragraphs introducing the topic and its significance.]
 
-## 5. Results & Conclusions
-The developed solution passed all functional integration tests and demonstrated a 99.4% uptime reliability score.
-`,
+## 2. Problem Statement
+**Main question:** [What problem does your project solve?]
+- Importance 1
+- Importance 2
+
+## 3. Objectives
+1. [Primary objective]
+2. [Secondary objective]
+
+## 4. Research Questions
+1. [Main question]
+2. [Sub-question]
+
+## 5. Hypotheses
+| # | Hypothesis | Result |
+|---|------------|--------|
+| 1 | [Statement] | ☐ Accepted ☐ Rejected |
+| 2 | [Statement] | ☐ Accepted ☐ Rejected |
+
+## 6. Scope
+- **Thematic:** ...
+- **Spatial:** ...
+- **Temporal:** ...
+
+## 7. Literature Review
+### Study by [Author] ([Year])
+- **Title:** ...
+- **Method:** ...
+- **Findings:** ...
+
+## 8. Methodology
+- **Approach:** [Descriptive / Experimental / Analytical]
+- **Population & Sample:** ...
+- **Data collection tools:** ...
+- **Statistical analysis:** SPSS, Cronbach's Alpha = 0.xx
+
+## 9. Results
+| Variable | Count | % |
+|----------|-------|---|
+| [Category 1] | | |
+| [Category 2] | | |
+
+## 10. Discussion
+[Interpret results in light of the literature.]
+
+## 11. Recommendations
+1. [Recommendation 1]
+2. [Recommendation 2]
+
+## 12. References
+Follow APA 7th edition.
+
+## 13. Appendices
+- Appendix A: Survey
+- Appendix B: Measurement tools
+- Appendix C: Supplementary data`,
     },
   },
+
+  /* ── 2. رسالة ماجستير/دكتوراه ── */
   {
-    id: 'thesis',
-    icon: '📑',
-    category: 'academic',
-    name: { ar: 'رسالة ماجستير / دكتوراه', en: 'Master / PhD Thesis' },
+    id: 'thesis', icon: '📑', category: 'academic', tags: ['ماجستير', 'دكتوراه', 'رسالة'],
+    name: { ar: 'رسالة ماجستير / دكتوراه (مفصّلة)', en: 'Master / PhD Thesis (Detailed)' },
     desc: {
-      ar: 'ملخص → مقدمة → مشكلة → أهداف → إطار نظري → دراسات سابقة → منهجية → تحليل البيانات → نتائج → مناقشة ومراجع',
-      en: 'Abstract → Intro → Problem → Theoretical Framework → Literature → Methodology → Data Analysis → Discussion → References',
+      ar: 'قالب متوافق مع متطلبات الرسائل العلمية — يشمل الإطار النظري، الدراسات السابقة، المنهجية، والتحليل الإحصائي.',
+      en: 'Thesis template with theoretical framework, literature review, methodology, and statistical analysis.',
     },
     markdown: {
-      ar: `# رسالة علمية (ماجستير / دكتوراه)
+      ar: `# [عنوان الرسالة]
 
-**عنوان الأطروحة:** [أدخل عنوان الأطروحة بالكامل]
-**إعداد الباحث:** [اسم الباحث]
-**المشرف الرئيس:** أ.د. [اسم المشرف]
-**كلية:** [اسم الكلية] — جامعة: [اسم الجامعة]
+**الجامعة:** [...]
+**الكلية:** [...]
+**القسم:** [...]
+**التخصص:** [...]
+**اسم الباحث:** [...]
+**الرقم الجامعي:** [...]
+**المشرف الرئيسي:** أ.د. [...]
+**المشرف المشارك:** د. [...]
+**تاريخ المناقشة:** [...]
+**السنة الجامعية:** [...]
 
 ---
 
-## المستخلص الأكاديمي
-تناقش هذه الدراسة أثر المتغيرات المستقلة على كفاءة الأداء في القطاع، باستخدام نموذج انحدار خطي متعدد وعينة قوامها 450 مفردة.
+## الملخص
 
-## 1. مشكلة الدراسة وأسئلتها
-1. ما مدى تأثير الرقمنة على تحسين الإنتاجية؟
-2. هل توجد فروق ذات دلالة إحصائية تبعاً لمتغير حجم المنشأة؟
+[250-350 كلمة: خلفية الدراسة، المشكلة، الأهداف، المنهجية، العينة، أهم النتائج، أهم التوصيات.]
 
-## 2. الإطار النظري والدراسات السابقة
-يستند البحث إلى النظرية الهيكلية الحديثة ونتائج دراسات (Smith et al., 2022).
+---
 
-## 3. منهجية البحث وعينة الدراسة
-- المنهج الوصفي التحليلي.
-- استخدام حزمة SPSS للتحليل الإحصائي واختبار الفرضيات.
-`,
-      en: `# Master / PhD Dissertation
+## شكر وتقدير
 
-**Title:** [Full Dissertation Title]
-**Researcher:** [Researcher Name]
-**Advisor:** Prof. Dr. [Advisor Name]
-**Faculty:** [Faculty Name] — [University Name]
+[اكتب شكرك]
+
+---
+
+## المحتويات
+
+| الفصل | العنوان |
+|-------|---------|
+| الأول | الإطار العام للدراسة |
+| الثاني | الإطار النظري والدراسات السابقة |
+| الثالث | منهجية الدراسة |
+| الرابع | عرض النتائج وتحليلها |
+| الخامس | مناقشة النتائج والتوصيات |
+
+---
+
+# الفصل الأول: الإطار العام للدراسة
+
+## 1.1 المقدمة
+## 1.2 مشكلة الدراسة
+## 1.3 أهداف الدراسة
+1. [...]
+2. [...]
+
+## 1.4 أسئلة الدراسة
+## 1.5 فروض الدراسة
+- H1: [...]
+- H2: [...]
+
+## 1.6 أهمية الدراسة
+**نظرية:** ...
+**تطبيقية:** ...
+
+## 1.7 حدود الدراسة
+- **الموضوعية:** ...
+- **المكانية:** ...
+- **الزمانية:** ...
+- **البشرية:** ...
+
+## 1.8 مصطلحات الدراسة
+
+| المصطلح | التعريف الإجرائي |
+|---------|-------------------|
+| [...] | [...] |
+
+---
+
+# الفصل الثاني: الإطار النظري والدراسات السابقة
+
+## 2.1 تمهيد
+## 2.2 المبحث الأول: [المتغير الأول]
+## 2.3 المبحث الثاني: [المتغير الثاني]
+## 2.4 المبحث الثالث: العلاقة بين المتغيرات
+## 2.5 الدراسات السابقة
+
+| الباحث | السنة | العنوان | المنهج | أهم النتائج |
+|--------|-------|---------|--------|-------------|
+| [...] | [...] | [...] | [...] | [...] |
+
+## 2.6 الفجوة البحثية
+## 2.7 التعقيب على الدراسات السابقة
+
+---
+
+# الفصل الثالث: منهجية الدراسة
+
+## 3.1 المنهج المستخدم
+## 3.2 مجتمع الدراسة
+## 3.3 عينة الدراسة
+## 3.4 أداة الدراسة
+## 3.5 صدق الأداة وثباتها
+- **Cronbach's Alpha:** [0.85]
+## 3.6 المعالجة الإحصائية
+- المتوسطات والانحرافات المعيارية
+- T-test
+- ANOVA
+- الانحدار الخطي
+- معامل ارتباط بيرسون
+- SPSS v.26
+
+---
+
+# الفصل الرابع: عرض النتائج وتحليلها
+
+## 4.1 نتائج السؤال الأول
+## 4.2 نتائج السؤال الثاني
+## 4.3 اختبار الفروض
+
+---
+
+# الفصل الخامس: مناقشة النتائج والتوصيات
+
+## 5.1 مناقشة النتائج
+## 5.2 التوصيات
+## 5.3 مقترحات لدراسات مستقبلية
+
+---
+
+# المراجع
+# الملاحق`,
+      en: `# [Thesis Title]
+
+**University:** [University Name]
+**Faculty:** [Faculty]
+**Department:** [Department]
+**Researcher:** [Name]
+**Supervisor:** Prof. [Name]
+**Academic Year:** [Year]
 
 ---
 
 ## Abstract
-This study investigates the correlation between modern automation frameworks and organizational efficiency across a sample size of 450 subjects.
+[250–350 words covering background, problem, objectives, methodology, sample, findings, and recommendations.]
 
-## 1. Research Questions & Hypotheses
-- **RQ1:** To what extent does digital transformation correlate with reduced operational error?
-- **H1:** There is a statistically significant positive effect of automated tooling on productivity.
-`,
+## Table of Contents
+| Chapter | Title |
+|---------|-------|
+| 1 | General Framework |
+| 2 | Theoretical Framework & Literature |
+| 3 | Methodology |
+| 4 | Results & Analysis |
+| 5 | Discussion & Recommendations |
+
+# Chapter 1: General Framework
+## 1.1 Introduction
+## 1.2 Problem Statement
+## 1.3 Objectives
+## 1.4 Research Questions
+## 1.5 Hypotheses
+## 1.6 Significance
+## 1.7 Scope
+## 1.8 Operational Definitions
+
+# Chapter 2: Theoretical Framework
+## 2.1 Literature Review
+## 2.2 Research Gap
+## 2.3 Positioning of the Study
+
+# Chapter 3: Methodology
+## 3.1 Approach
+## 3.2 Population & Sample
+## 3.3 Instrument & Validity
+## 3.4 Statistical Analysis (SPSS v.26)
+
+# Chapter 4: Results
+## 4.1 Descriptive Results
+## 4.2 Hypothesis Testing
+
+# Chapter 5: Discussion & Recommendations
+## 5.1 Discussion
+## 5.2 Recommendations
+## 5.3 Future Research
+
+# References
+# Appendices`,
     },
   },
+
+  /* ── 3. خطة عمل تجارية ── */
   {
-    id: 'business-plan',
-    icon: '💼',
-    category: 'business',
-    name: { ar: 'خطة عمل تجارية', en: 'Business Plan' },
+    id: 'business-plan', icon: '💼', category: 'business', tags: ['ريادة', 'مشروع', 'شركة'],
+    name: { ar: 'خطة عمل تجارية (Business Plan)', en: 'Business Plan' },
     desc: {
-      ar: 'ملخص تنفيذي → وصف المشروع → تحليل السوق → المنتج/الخدمة → التسويق → التشغيل → المالية → تحليل المخاطر',
-      en: 'Executive Summary → Description → Market Analysis → Product/Service → Marketing → Operations → Financials → Risks',
+      ar: 'خطة متكاملة تشمل الملخص التنفيذي، تحليل السوق، النموذج المالي، وخطة التسويق.',
+      en: 'Complete business plan with executive summary, market analysis, financials, and marketing plan.',
     },
     markdown: {
-      ar: `# خطة عمل تجارية (Business Plan)
+      ar: `# خطة عمل: [اسم المشروع]
 
-**اسم المشروع:** [أدخل اسم الشركة / المشروع]
-**مؤسس المشروع:** [الاسم]
-**التاريخ:** [التاريخ]
+**اسم المؤسس:** [...]
+**القطاع:** [...]
+**تاريخ الإعداد:** [...]
+**النسخة:** v1.0
+**السرية:** سرّي — لا يُوزّع
 
 ---
 
-## 1. الملخص التنفيذي
-منصة رقمية رائدة متخصصة في تقديم حلول [المجال] للشركات والأفراد في منطقة الشرق الأوسط وشمال أفريقيا.
+## 1. الملخص التنفيذي (Executive Summary)
 
-## 2. المشكلة والحل المقترح
-- **المشكلة:** فقدان التنسيق عند نسخ مخرجات الذكاء الاصطناعي وضياع الوقت في إعادة التنسيق اليدوي.
-- **الحل:** محرر مداد الذكي لتحويل المستندات لحظياً إلى صيغ DOCX وPDF مع الحفاظ التام على المعادلات.
+**الوصف المختصر:** [ما المشروع في 3 أسطر؟ من هو العميل؟ ما القيمة المضافة؟]
 
-## 3. حجم السوق والجمهور المستهدف
-- **TAM:** 1.2 مليار دولار إقليمياً.
-- **الجمهور المستهدف:** الطلاب والباحثون، مدراء المشاريع، كتاب المحتوى والمهندسون.
+**الفرصة:** [ما المشكلة التي تحلّها؟ لماذا الآن؟]
 
-## 4. نموذج الإيرادات والأسعار
-- خطة مجانية برصيد شهري متجدد.
-- باقات رصيد مدفوعة تبدأ من 2.99$ وتصل إلى 19.99$.
-`,
-      en: `# Business Plan
+**النموذج الربحي:** [كيف تُدرّ الأموال؟]
 
-**Company Name:** [Company Name]
-**Founder:** [Founder Name]
-**Date:** [Date]
+**احتياج التمويل:**
+- المبلغ المطلوب: [...] ريال
+- الاستخدام: [تطوير المنتج 40% / التسويق 30% / الرواتب 20% / تشغيل 10%]
+- العائد المتوقع: [...] %
+
+---
+
+## 2. وصف المشروع
+
+### 2.1 الرؤية
+[أن نكون...]
+
+### 2.2 الرسالة
+[نقدم... من خلال...]
+
+### 2.3 القيم
+- الشفافية
+- الابتكار
+- العميل أولًا
+
+### 2.4 الأهداف الذكية (SMART)
+| الهدف | المدة | المؤشر |
+|-------|-------|--------|
+| [الوصول إلى 1000 عميل] | [6 أشهر] | [عدد العملاء] |
+
+---
+
+## 3. تحليل السوق
+
+### 3.1 حجم السوق
+- **TAM (السوق الكلي):** [...]
+- **SAM (السوق المتاح):** [...]
+- **SOM (السوق القابل للاستحواذ):** [...]
+
+### 3.2 العملاء المستهدفون
+| الشريحة | الخصائص | الاحتياج |
+|---------|---------|----------|
+| [الشريحة 1] | [...] | [...] |
+
+### 3.3 تحليل المنافسين
+| المنافس | نقاط القوة | نقاط الضعف | السعر |
+|---------|------------|------------|-------|
+| [منافس 1] | [...] | [...] | [...] |
+
+### 3.4 تحليل SWOT
+| **نقاط القوة (S)** | **نقاط الضعف (W)** |
+|---------------------|---------------------|
+| [قوة 1] | [ضعف 1] |
+
+| **الفرص (O)** | **التهديدات (T)** |
+|----------------|--------------------|
+| [فرصة 1] | [تهديد 1] |
+
+---
+
+## 4. المنتج / الخدمة
+
+### 4.1 وصف المنتج
+### 4.2 الميزة التنافسية
+### 4.3 خارطة طريق المنتج (Product Roadmap)
+| المرحلة | المدة | المخرجات |
+|---------|-------|----------|
+| MVP | 3 أشهر | [وصف] |
+
+---
+
+## 5. الخطة التسويقية
+
+### 5.1 استراتيجية التسويق (STP)
+- Segmentation: ...
+- Targeting: ...
+- Positioning: ...
+
+### 5.2 المزيج التسويقي (4Ps)
+| العنصر | التفاصيل |
+|--------|----------|
+| Product | [...] |
+| Price | [...] |
+| Place | [...] |
+| Promotion | [...] |
+
+### 5.3 قنوات التسويق
+| القناة | التكلفة الشهرية | العملاء المتوقعون |
+|--------|------------------|--------------------|
+| [سوشيال ميديا] | [...] | [...] |
+
+---
+
+## 6. الخطة التشغيلية
+
+### 6.1 العمليات الأساسية
+### 6.2 الموارد البشرية
+| الوظيفة | العدد | الراتب | المسؤوليات |
+|---------|-------|--------|--------------|
+| [مدير عام] | 1 | [...] | [...] |
+
+### 6.3 الموقع والتجهيزات
+
+---
+
+## 7. الخطة المالية
+
+### 7.1 افتراضات مالية
+### 7.2 التوقعات المالية (3 سنوات)
+| البند | السنة 1 | السنة 2 | السنة 3 |
+|-------|---------|---------|---------|
+| الإيرادات | [...] | [...] | [...] |
+| صافي الربح | [...] | [...] | [...] |
+
+### 7.3 تحليل نقطة التعادل
+- التكاليف الثابتة: [...]
+- السعر للوحدة: [...]
+- التكلفة المتغيرة: [...]
+- **نقطة التعادل = الثابتة ÷ (السعر - المتغيرة)**
+
+---
+
+## 8. تحليل المخاطر
+
+| المخاطرة | الاحتمال | الأثر | خطة التخفيف |
+|----------|----------|-------|--------------|
+| [...] | [...] | [...] | [...] |
+
+---
+
+## 9. الملاحق`,
+      en: `# Business Plan: [Project Name]
+
+**Founder:** [...]
+**Sector:** [...]
+**Date:** [...]
+**Version:** v1.0
 
 ---
 
 ## 1. Executive Summary
-A modern SaaS platform enabling seamless document conversion and formatting for professionals and students.
+[3-sentence description, customer, value proposition, revenue model, funding ask]
 
-## 2. Market Opportunity & Value Proposition
-- Market Size (TAM): $1.2B serviceable market in developer and academic productivity.
-- Direct revenue model via flexible credits and enterprise volume licenses.
-`,
+## 2. Company Description
+- **Vision:**
+- **Mission:**
+- **Values:**
+- **SMART Goals:**
+
+## 3. Market Analysis
+- **TAM / SAM / SOM:**
+- **Target customers:**
+- **Competitors:**
+- **SWOT:**
+
+## 4. Product / Service
+- **Description:**
+- **Competitive edge:**
+- **Roadmap:**
+
+## 5. Marketing Plan
+- **STP:** Segmentation, Targeting, Positioning
+- **4Ps:** Product, Price, Place, Promotion
+- **Channels & budget:**
+
+## 6. Operations Plan
+- **Core processes:**
+- **Team & roles:**
+- **Facilities:**
+
+## 7. Financial Plan
+- **Assumptions:**
+- **3-year projections:**
+- **Break-even analysis:**
+
+## 8. Risk Analysis
+| Risk | Probability | Impact | Mitigation |
+|------|-------------|--------|------------|
+
+## 9. Appendices`,
     },
   },
+
+  /* ── 4. دراسة جدوى ── */
   {
-    id: 'feasibility',
-    icon: '📊',
-    category: 'business',
-    name: { ar: 'دراسة جدوى متكاملة', en: 'Feasibility Study' },
+    id: 'feasibility', icon: '📊', category: 'business', tags: ['جدوى', 'دراسة', 'مشروع'],
+    name: { ar: 'دراسة جدوى اقتصادية', en: 'Feasibility Study' },
     desc: {
-      ar: 'ملخص تنفيذي → فكرة المشروع → دراسة السوق → الدراسة الفنية → الدراسة المالية → المخاطر والقرار النهائي',
-      en: 'Executive Summary → Market Study → Technical Study → Financial Model → Risk Assessment → Verdict',
+      ar: 'قالب دراسة جدوى يشمل السوق، الجدوى الفنية، المالية، والقانونية.',
+      en: 'Feasibility study covering market, technical, financial, and legal feasibility.',
     },
     markdown: {
-      ar: `# دراسة جدوى اقتصادية وفنية
+      ar: `# دراسة جدوى: [اسم المشروع]
 
-**اسم المشروع المقترح:** [اسم المشروع]
-**إعداد:** [فريق الاستشارات الاقتصادية]
+## 1. ملخص تنفيذي
+[ما المشروع؟ التكلفة؟ العائد المتوقع؟]
 
----
+## 2. فكرة المشروع
 
-## 1. دراسة الجدوى التسويقية
-- حجم الطلب المتوقع: 50,000 عملية شهرياً خلال العام الأول.
-- المنافسة المباشرة: بدائل محدودة تفتقر للدعم العربي السليم ومعادلات LaTeX الأصلية.
+## 3. الدراسة السوقية
+- **حجم السوق:** [...]
+- **الطلب المتوقع:** [...]
+- **المنافسون:** [...]
+- **العملاء المستهدفون:** [...]
 
-## 2. دراسة الجدوى الفنية والتقنية
-- البنية التحتية السحابية: خوادم سريعة بتكلفة قابلة للتوسع التدريجي.
-- الكفاءة التشغيلية: استهلاك منخفض للموارد ومعالجة طرفية سريعة.
+## 4. الدراسة الفنية
+- **الموقع:** [...]
+- **المساحة:** [...]
+- **الآلات والمعدات:** [...]
+- **المواد الخام:** [...]
+- **العمالة:** [...]
 
-## 3. دراسة الجدوى المالية
-- نقطة التعادل: الشهر الخامس من التشغيل.
-- العائد المتوقع على الاستثمار (ROI): 140% خلال 18 شهراً.
-`,
-      en: `# Project Feasibility Study
+## 5. الدراسة المالية
+| البند | التكلفة |
+|-------|--------|
+| الأصول الثابتة | [...] |
+| رأس المال العامل | [...] |
+| **إجمالي الاستثمار** | **[...]** |
 
-**Project Name:** [Project Name]
-**Prepared by:** [Author / Team]
+### التدفقات النقدية المتوقعة
+| السنة | الإيرادات | المصروفات | صافي التدفق |
+|-------|-----------|-----------|----------------|
+| 1 | [...] | [...] | [...] |
+| 2 | [...] | [...] | [...] |
+| 3 | [...] | [...] | [...] |
 
----
+### مؤشرات الجدوى
+- **NPV:** [...]
+- **IRR:** [...]
+- **فترة الاسترداد:** [...]
+- **نقطة التعادل:** [...]
 
-## 1. Market Feasibility
-Demonstrated recurring demand among university students, researchers, and professional agencies.
+## 6. الدراسة القانونية والبيئية
+- **التراخيص:** [...]
+- **الأثر البيئي:** [...]
 
-## 2. Financial Feasibility
-- Break-even Point: Month 5.
-- Projected ROI: 140% over 18 months.
-`,
+## 7. تحليل المخاطر
+
+## 8. القرار النهائي
+[هل المشروع مجدٍ؟ نعم/لا + السبب]`,
     },
   },
+
+  /* ── 5. خطة تسويقية ── */
   {
-    id: 'marketing',
-    icon: '📣',
-    category: 'business',
-    name: { ar: 'خطة تسويقية شاملة', en: 'Comprehensive Marketing Plan' },
+    id: 'marketing', icon: '📣', category: 'business', tags: ['تسويق', 'حملة'],
+    name: { ar: 'خطة تسويقية متكاملة', en: 'Marketing Plan' },
     desc: {
-      ar: 'تحليل الوضع → SWOT → الجمهور → الأهداف → الاستراتيجية → المزيج التسويقي → القنوات والميزانية',
-      en: 'Situation Analysis → SWOT → Target Audience → SMART Goals → Marketing Mix (4Ps) → Channels & Budget',
+      ar: 'تحليل، SWOT، 4Ps، KPIs، ميزانية، وجدول تنفيذ — جاهز للتخصيص.',
+      en: 'Situation analysis, SWOT, 4Ps, KPIs, budget, and execution schedule.',
     },
     markdown: {
-      ar: `# خطة تسويقية سنوية
+      ar: `# خطة تسويقية: [اسم المشروع]
 
-## 1. تحليل SWOT
-- **نقاط القوة (Strengths):** سرعة فائقة، دعم كامل للغة العربية والـ LaTeX.
-- **نقاط الضعف (Weaknesses):** علامة تجارية جديدة تتطلب زيادة الوعي.
-- **الفرص (Opportunities):** التوسع الهائل في أدوات الذكاء الاصطناعي (ChatGPT, Gemini).
-- **التهديدات (Threats):** ظهور أدوات مجانية مدعومة من شركات كبرى.
+**الفترة:** [...]
+**الميزانية:** [...]
+**المسؤول:** [...]
 
-## 2. أهداف الخطة التسويقية (SMART)
-- استقطاب 100,000 مستخدم نشط خلال 6 أشهر.
-- خفض تكلفة اكتساب العميل (CAC) إلى أقل من 0.40$.
-`,
-      en: `# Marketing Plan & Growth Strategy
+## 1. تحليل الوضع الحالي
+- **السوق:** [...]
+- **المنافسون:** [...]
+- **قدراتنا:** [...]
 
-## 1. SWOT Analysis
-- **Strengths:** Fast client-side conversion, native Arabic RTL support, OMML equation output.
-- **Opportunities:** Surging user adoption of generative AI tools requiring export tools.
+## 2. تحليل SWOT
+| S (قوة) | W (ضعف) | O (فرص) | T (تهديدات) |
+|---------|---------|---------|--------------|
+| [...] | [...] | [...] | [...] |
 
-## 2. Acquisition Channels
-- Organic SEO and technical tutorial content.
-- University developer ambassadors.
-`,
+## 3. الجمهور المستهدف
+| الشريحة | العمر | الاحتياج | القناة |
+|---------|-------|----------|--------|
+| [...] | [...] | [...] | [...] |
+
+## 4. الأهداف (SMART)
+1. [زيادة الوعي 30% خلال 3 أشهر]
+2. [...]
+
+## 5. الاستراتيجية (STP)
+
+## 6. المزيج التسويقي (4Ps)
+- **Product:**
+- **Price:**
+- **Place:**
+- **Promotion:**
+
+## 7. القنوات
+| القناة | التكلفة | الجمهور المتوقع |
+|--------|---------|------------------|
+| [...] | [...] | [...] |
+
+## 8. الميزانية
+| البند | المبلغ |
+|-------|--------|
+| [...] | [...] |
+| **الإجمالي** | **[...]** |
+
+## 9. مؤشرات القياس (KPIs)
+
+## 10. جدول التنفيذ
+| الشهر | النشاط | المسؤول | الميزانية |
+|-------|--------|----------|------------|
+| [...] | [...] | [...] | [...] |`,
     },
   },
+
+  /* ── 6. تقرير أداء ── */
   {
-    id: 'performance',
-    icon: '📈',
-    category: 'reports',
-    name: { ar: 'تقرير أداء شهري / ربع سنوي', en: 'Performance Review Report' },
+    id: 'performance', icon: '📈', category: 'reports', tags: ['أداء', 'تقرير', 'KPI'],
+    name: { ar: 'تقرير أداء شهري / ربع سنوي', en: 'Performance Report' },
     desc: {
-      ar: 'ملخص تنفيذي → مؤشرات KPIs → الإنجازات المحققة → المعوقات والحلول → التحليل المالي والتوصيات',
-      en: 'Executive Summary → KPIs → Milestones → Blockers & Solutions → Financial Summary → Next Steps',
+      ar: 'قالب تقرير أداء مع KPIs وإنجازات ومعوقات وخطة الفترة القادمة.',
+      en: 'Performance report with KPIs, achievements, blockers, and next-period plan.',
     },
     markdown: {
-      ar: `# تقرير الأداء الربع سنوي (Q1 Performance Report)
+      ar: `# تقرير أداء [الفترة]
 
-## 1. الملخص التنفيذي
-حقق الفريق نمواً بنسبة 42% في عدد العمليات المنجزة مع الحفاظ على رضا المستخدمين بنسبة 96%.
+**القسم:** [...]
+**المعد:** [...]
+**التاريخ:** [...]
+**الفترة:** من [...] إلى [...]
 
-## 2. لوحة مؤشرات الأداء (KPIs)
-| المؤشر | المستهدف | المحقق | نسبة الإنجاز |
-| :--- | :--- | :--- | :--- |
-| عدد المستندات المصدّرة | 25,000 | 28,400 | 113% |
-| وقت معالجة المستند | < 1.5s | 0.9s | ممتاز |
-| معدل التحويل للمدفوع | 4.0% | 4.8% | 120% |
-`,
-      en: `# Quarterly Performance Report
+## 1. ملخص تنفيذي
+[3-5 أسطر]
 
-## 1. Executive Summary
-The team achieved a 42% quarter-over-quarter expansion in active document exports with 96% positive CSAT.
+## 2. مؤشرات الأداء KPIs
+| المؤشر | الهدف | الفعلي | النسبة % | الحالة |
+|--------|--------|--------|----------|--------|
+| [...] | [...] | [...] | [...] | 🟢/🟡/🔴 |
 
-## 2. Key Performance Indicators
-| Metric | Target | Actual | Attainment |
-| :--- | :--- | :--- | :--- |
-| Documents Converted | 25,000 | 28,400 | 113% |
-| Average Latency | < 1.5s | 0.9s | Optimal |
-`,
+## 3. الإنجازات
+## 4. المعوقات
+| المعوق | الأثر | الحل المقترح |
+|--------|-------|----------------|
+| [...] | [...] | [...] |
+
+## 5. التحليل
+## 6. التوصيات
+## 7. خطة الفترة القادمة
+| الهدف | المدة | المسؤول |
+|-------|-------|----------|
+| [...] | [...] | [...] |`,
     },
   },
+
+  /* ── 7. مقترح هندسي ── */
   {
-    id: 'engineering',
-    icon: '🏗️',
-    category: 'engineering',
+    id: 'engineering', icon: '🏗️', category: 'engineering', tags: ['هندسة', 'مدني', 'ميكانيكا'],
     name: { ar: 'مقترح مشروع هندسي', en: 'Engineering Project Proposal' },
     desc: {
-      ar: 'عنوان → خلفية → مشكلة → أهداف → نطاق → متطلبات فنية → جدول زمني وميزانية → معايير القبول',
-      en: 'Background → Problem → Scope → Technical Specs → Gantt Chart & Milestones → Quality Acceptance',
+      ar: 'قالب مقترح مشروع هندسي متوافق مع معايير IEEE — يشمل الدراسة الفنية والجدول الزمني والميزانية.',
+      en: 'Engineering proposal template with technical study, schedule, and budget.',
     },
     markdown: {
-      ar: `# مقترح مشروع هندسي فني
+      ar: `# مقترح مشروع هندسي: [العنوان]
 
-**اسم المشروع:** [مشروع هندسة وتطوير الأنظمة]
-**الجهة المنفذة:** [الشركة الهندسية]
+**القسم:** [مدني / ميكانيكا / كهرباء / كيميائي / صناعي]
+**الفريق:** [...]
+**المشرف:** د. [...]
+**التاريخ:** [...]
 
 ---
 
-## 1. نطاق العمل الهندسي (Scope of Work)
-يشمل المشروع تصميم واختبار البنية التحتية، وتنفيذ منظومة فحص الجودة طبقاً لمعايير ISO 9001.
+## 1. ملخص تنفيذي
+## 2. خلفية المشروع
+### 2.1 مقدمة
+### 2.2 المشكلة
+### 2.3 أهمية المشروع
+- **اقتصادية:**
+- **بيئية:**
+- **اجتماعية:**
 
-## 2. المتطلبات والمواصفات الفنية
-- الالتزام بالكود الهندسي المعتمد.
-- ضمان عدم تجاوز نسبة الخطأ المسموح بها عن 0.02%.
-`,
-      en: `# Engineering Project Proposal
+## 3. أهداف المشروع
+1. [هدف رئيسي]
+2. [هدف فرعي]
 
-**Project Title:** [Engineering Infrastructure Upgrade]
-**Engineering Lead:** [Lead Engineer]
+## 4. نطاق العمل (Scope)
+### 4.1 داخل النطاق
+### 4.2 خارج النطاق
+### 4.3 المخرجات (Deliverables)
+| المخرج | الوصف | تاريخ التسليم |
+|--------|--------|----------------|
+| دراسة الجدوى | [...] | [...] |
+| التصاميم التفصيلية | [...] | [...] |
+
+## 5. الدراسات الفنية
+### 5.1 الدراسة الأولية
+### 5.2 الحسابات والتحليل
+| المعامل | القيمة | الوحدة |
+|---------|--------|--------|
+| [الحمل] | [...] | kN |
+| [الإجهاد] | [...] | MPa |
+
+### 5.3 المعايير المستخدمة
+- ACI 318
+- AISC
+- IEC
+
+## 6. المواصفات والمتطلبات
+## 7. الجدول الزمني (Gantt)
+## 8. الميزانية التقديرية
+| البند | الكمية | سعر الوحدة | الإجمالي |
+|-------|--------|-------------|-----------|
+| [...] | [...] | [...] | [...] |
+
+## 9. إدارة المخاطر
+## 10. الفريق والمسؤوليات
+## 11. المراجع
+## 12. الملاحق`,
+    },
+  },
+
+  /* ── 8. مشروع برمجي SRS ── */
+  {
+    id: 'software', icon: '💻', category: 'tech', tags: ['برمجة', 'تطبيق', 'SRS'],
+    name: { ar: 'مشروع تطبيق / برمجية (SRS)', en: 'Software Requirements Specification' },
+    desc: {
+      ar: 'قالب متوافق مع هندسة البرمجيات — يشمل المتطلبات، حالات الاستخدام، التصميم، خطة الاختبار.',
+      en: 'Software engineering SRS with requirements, use cases, design, and test plan.',
+    },
+    markdown: {
+      ar: `# وثيقة متطلبات النظام (SRS) — [اسم النظام]
+
+**اسم المشروع:** [...]
+**الفريق:** [...]
+**العميل:** [...]
+**الإصدار:** 1.0
+**التاريخ:** [...]
 
 ---
 
-## 1. Engineering Scope & Requirements
-Covers system architecture, high-availability load testing, and compliance with ISO-9001 quality specifications.
-`,
+## 1. المقدمة
+### 1.1 الغرض
+### 1.2 النطاق
+### 1.3 التعريفات والاختصارات
+| المصطلح | التعريف |
+|---------|----------|
+| API | واجهة برمجة التطبيقات |
+| UI | واجهة المستخدم |
+
+### 1.4 المراجع
+
+## 2. الوصف العام
+### 2.1 منظور المنتج
+### 2.2 وظائف المنتج
+### 2.3 فئات المستخدمين
+| الفئة | الوصف | الصلاحيات |
+|-------|--------|------------|
+| [مدير] | [...] | [...] |
+| [مستخدم] | [...] | [...] |
+
+### 2.4 بيئة التشغيل
+### 2.5 القيود والافتراضات
+
+## 3. المتطلبات الوظيفية (FR)
+### FR-01: تسجيل الدخول
+- **الوصف:** ...
+- **المدخلات:** ...
+- **المخرجات:** ...
+- **السيناريو الأساسي:** ...
+
+### FR-02: [إضافة عنصر إلى السلة]
+
+## 4. المتطلبات غير الوظيفية (NFR)
+| المعرف | المتطلب | القياس |
+|--------|---------|--------|
+| NFR-01 | الأداء | < 2 ثانية |
+| NFR-02 | الأمان | TLS 1.3 |
+| NFR-03 | التوافر | 99.9% |
+| NFR-04 | قابلية التوسع | 10,000 مستخدم |
+
+## 5. حالات الاستخدام (Use Cases)
+### UC-01: إجراء عملية شراء
+**الفاعل:** عميل
+**التدفق الأساسي:**
+1. يضيف المنتج للسلة
+2. ...
+**التدفق البديل A:** [فشل الدفع]
+
+## 6. التصميم
+### 6.1 المعمارية
+### 6.2 ERD
+| الجدول | الأعمدة | PK |
+|--------|---------|-----|
+| Users | id, name, email | id |
+| Products | id, name, price | id |
+
+### 6.3 UML
+### 6.4 Sequence Diagrams
+
+## 7. خطة الاختبار
+| الحالة | الوصف | المدخلات | المخرجات المتوقعة | النتيجة |
+|--------|--------|----------|---------------------|---------|
+| TC-01 | تسجيل دخول صحيح | email+pass | دخول ناجح | ✅ |
+
+## 8. خطة الإطلاق
+## 9. الصيانة والدعم
+## 10. الملاحق`,
     },
   },
+
+  /* ── 9. مشروع إنشائي ── */
   {
-    id: 'software',
-    icon: '💻',
-    category: 'tech',
-    name: { ar: 'مشروع برمجي / تطبيق ذكي', en: 'Software Architecture & App Spec' },
+    id: 'construction', icon: '🏢', category: 'engineering', tags: ['بناء', 'إنشاء', 'مقاولات'],
+    name: { ar: 'مشروع إنشائي / بناء', en: 'Construction Project' },
     desc: {
-      ar: 'الرؤية → المتطلبات الوظيفية وغير الوظيفية → المعمارية والتقنيات → خطة التطوير والاختبار والنشر',
-      en: 'Vision → Functional & Non-Functional Specs → System Architecture → Testing Plan → DevOps CI/CD',
+      ar: 'قالب مشروع إنشائي يشمل الدراسة الأولية، التصاميم، الكميات، والجدول الزمني.',
+      en: 'Construction project template with preliminary study, designs, BOQ, and schedule.',
     },
     markdown: {
-      ar: `# وثيقة متطلبات البرمجيات (Software Requirements Specification - SRS)
+      ar: `# مشروع إنشائي: [اسم المشروع]
 
-## 1. المتطلبات الوظيفية (Functional Requirements)
-1. **استيراد الـ Markdown:** دعم الروابط المشتركة ونسخ الحافظة المباشر.
-2. **محول المعادلات:** تحويل صيغ KaTeX إلى OMML وMathML متوافقة مع Microsoft Word.
-3. **التصدير الفوري:** توليد حزم docx ثنائية مباشرة دون الحاجة لمعالجة خارجية.
+**الموقع:** [...]
+**المساحة:** [...] م²
+**نوع المبنى:** [سكني/تجاري/صناعي]
+**تاريخ البدء:** [...]
+**تاريخ الإنجاز:** [...]
 
-## 2. المتطلبات غير الوظيفية (Non-Functional Requirements)
-- **السرعة:** زمن الاستجابة أقل من 800 ميلي ثانية.
-- **الأمان:** حماية بيانات المستخدم بالكامل بدون تخزين غير مصرح.
-`,
-      en: `# Software Requirements Specification (SRS)
+## 1. الدراسة الأولية
+- **التربة:** [نوعها، قدرة التحمل]
+- **المياه الجوفية:** [...]
+- **المناخ:** [...]
+- **الكود:** [SBC / ACI]
 
-## 1. Functional Requirements
-- High-fidelity conversion from AI Markdown directly to valid OOXML / DOCX packages.
-- Accurate transformation of LaTeX equation trees into native Microsoft Word OMML elements.
-`,
+## 2. التصاميم
+### 2.1 المعماري
+### 2.2 الإنشائي
+### 2.3 الكهربائي والميكانيكي
+
+## 3. الكميات (Bill of Quantities)
+| البند | الوحدة | الكمية | سعر الوحدة | الإجمالي |
+|-------|--------|--------|-------------|-----------|
+| خرسانة | م³ | [...] | [...] | [...] |
+| حديد | طن | [...] | [...] | [...] |
+
+## 4. الجدول الزمني
+| المرحلة | المدة | البداية | النهاية |
+|---------|-------|---------|---------|
+| الأعمال الترابية | [...] | [...] | [...] |
+| الأساسات | [...] | [...] | [...] |
+
+## 5. الميزانية
+## 6. السلامة والجودة
+## 7. إدارة المخاطر
+## 8. التسليم`,
     },
   },
+
+  /* ── 10. مقترح بحث / منحة ── */
   {
-    id: 'ats-cv',
-    icon: '📄',
-    category: 'jobs',
-    name: { ar: 'سيرة ذاتية متوافقة مع أنظمة ATS', en: 'ATS-Optimized Clean Resume' },
+    id: 'grant', icon: '🎯', category: 'research', tags: ['بحث', 'منحة', 'تمويل'],
+    name: { ar: 'مقترح بحث / منحة', en: 'Research / Grant Proposal' },
     desc: {
-      ar: 'عمود واحد منظم بدون جداول معقدة، كلمات مفتاحية دقيقة، ونصوص واضحة تتجاوز فلاتر التوظيف',
-      en: 'Single-column structure, keyword-optimized sections, parseable by modern Applicant Tracking Systems',
+      ar: 'قالب مقترح بحث علمي متوافق مع هيئات التمويل — يشمل المنهجية والأثر والميزانية.',
+      en: 'Research grant proposal with methodology, impact, and budget.',
     },
     markdown: {
-      ar: `# [الاسم الكامل]
+      ar: `# مقترح بحث / منحة
 
-**المسمى الوظيفي:** مهندس برمجيات أول (Senior Software Engineer)
-📧 [البريد الإلكتروني] | 📱 [+966 50 000 0000] | 📍 [الرياض، المملكة العربية السعودية]
-🔗 [رابط LinkedIn] | 💻 [رابط GitHub]
+**عنوان البحث:** [...]
+**الباحث الرئيسي:** [...]
+**الجهة:** [...]
+**مدة البحث:** [...]
+**الميزانية:** [...]
+
+## 1. الملخص
+## 2. الخلفية
+## 3. مشكلة البحث
+## 4. أهداف البحث
+## 5. أهمية البحث
+## 6. المنهجية
+- **المنهج:**
+- **العينة:**
+- **الأدوات:**
+- **التحليل:**
+
+## 7. خطة العمل
+| المرحلة | المدة | المخرجات |
+|---------|-------|----------|
+| [...] | [...] | [...] |
+
+## 8. الميزانية التفصيلية
+| البند | المبلغ | التبرير |
+|-------|--------|----------|
+| [...] | [...] | [...] |
+
+## 9. الأثر المتوقع
+## 10. الفريق
+## 11. المراجع`,
+    },
+  },
+
+  /* ── 11. تقرير حالة سريرية ── */
+  {
+    id: 'medical-case', icon: '🩺', category: 'medical', tags: ['طب', 'حالة', 'سريرية'],
+    name: { ar: 'تقرير حالة سريرية (Case Report)', en: 'Clinical Case Report' },
+    desc: {
+      ar: 'قالب تقرير حالة سريرية متوافق مع معايير CARE.',
+      en: 'Clinical case report template following CARE guidelines.',
+    },
+    markdown: {
+      ar: `# تقرير حالة سريرية
+
+**المستشفى:** [...]
+**القسم:** [...]
+**اسم الطبيب/الطالب:** [...]
+**الرقم الأكاديمي:** [...]
+**المشرف:** د. [...]
+**التاريخ:** [...]
+
+## معلومات المريض (Anonymized)
+| الحقل | القيمة |
+|-------|--------|
+| رقم الملف | [XXXX] |
+| العمر | [XX] سنة |
+| الجنس | [ذكر/أنثى] |
+
+## الشكوى الرئيسية
+[جملة واحدة]
+
+## تاريخ المرض الحالي (OLDCARTS)
+- **O**nset:
+- **L**ocation:
+- **D**uration:
+- **C**haracter:
+- **A**ssociated:
+- **R**elieving:
+- **T**iming:
+- **S**everity:
+
+## التاريخ المرضي السابق
+- **الأمراض المزمنة:**
+- **العمليات:**
+- **الحساسية:**
+- **الأدوية:**
+
+## الفحص السريري
+### العلامات الحيوية
+| العلامة | القيمة | الطبيعي |
+|---------|--------|---------|
+| الحرارة | [...] | 36.5-37.5 |
+| النبض | [...] | 60-100 |
+
+### الفحص العام
+### الفحص الموضعي
+
+## الفحوصات المخبرية
+| الفحص | النتيجة | الطبيعي |
+|-------|---------|---------|
+| WBC | [...] | 4-11 |
+
+## الفحوصات الشعاعية
+## التشخيص التفريقي
+## التشخيص النهائي
+## الخطة العلاجية
+## سير المرض
+## النتيجة
+## مناقشة
+## الدروس المستفادة
+## المراجع
+## موافقة المريض`,
+    },
+  },
+
+  /* ── 12. مذكرة قانونية ── */
+  {
+    id: 'legal-memo', icon: '⚖️', category: 'law', tags: ['قانون', 'مذكرة', 'محاماة'],
+    name: { ar: 'مذكرة قانونية (Legal Memo)', en: 'Legal Memorandum' },
+    desc: {
+      ar: 'قالب مذكرة قانونية بصيغة IRAC.',
+      en: 'Legal memorandum in IRAC format (Issue, Rule, Application, Conclusion).',
+    },
+    markdown: {
+      ar: `# مذكرة قانونية
+
+**إلى:** [...]
+**من:** [...]
+**التاريخ:** [...]
+**الموضوع:** [...]
+**السرية:** سرّي
+
+## 1. المسألة القانونية (Issue)
+## 2. الوقائع (Facts)
+## 3. القاعدة القانونية (Rule)
+### 3.1 النصوص النظامية
+### 3.2 السوابق القضائية
+### 3.3 الفقه القانوني
+## 4. التحليل (Analysis)
+### 4.1 تطبيق النص على الوقائع
+### 4.2 مقارنة بالسوابق
+### 4.3 الحجج المؤيدة
+### 4.4 الحجج المعارضة
+## 5. الاستنتاج (Conclusion)
+## 6. التوصيات
+## 7. المراجع
+## 8. المرفقات`,
+    },
+  },
+
+  /* ── 13. تقرير تدريب ── */
+  {
+    id: 'internship', icon: '🧑‍💼', category: 'education', tags: ['تدريب', 'صيفي', 'جامعة'],
+    name: { ar: 'تقرير تدريب صيفي (Co-op)', en: 'Summer Internship Report' },
+    desc: {
+      ar: 'قالب تقرير تدريب معتمد من الجامعات.',
+      en: 'University-approved internship report template.',
+    },
+    markdown: {
+      ar: `# تقرير التدريب الصيفي
+
+**الجامعة:** [...]
+**الكلية:** [...]
+**القسم:** [...]
+**اسم المتدرب:** [...]
+**الرقم الجامعي:** [...]
+**جهة التدريب:** [...]
+**المشرف الأكاديمي:** د. [...]
+**المشرف الميداني:** أ. [...]
+**فترة التدريب:** من [...] إلى [...]
+**عدد الساعات:** [...] ساعة
+
+## 1. مقدمة
+## 2. وصف جهة التدريب
+### 2.1 نبذة عن المؤسسة
+### 2.2 الهيكل التنظيمي
+### 2.3 القسم الذي تدربت فيه
+## 3. مهام التدريب
+### 3.1 جدول المهام الأسبوعي
+| الأسبوع | التاريخ | المهام | المهارات المكتسبة |
+|---------|---------|---------|-------------------|
+| 1 | [...] | [...] | [...] |
+
+### 3.2 وصف تفصيلي للمهام
+## 4. المشاريع التي شاركت فيها
+## 5. المهارات المكتسبة
+## 6. التحديات والحلول
+## 7. التقييم الذاتي
+## 8. التوصيات
+## 9. الخاتمة
+## 10. الملاحق`,
+    },
+  },
+
+  /* ── 14. ميثاق مشروع ── */
+  {
+    id: 'charter', icon: '📋', category: 'pm', tags: ['PMP', 'مشروع', 'ميثاق'],
+    name: { ar: 'ميثاق مشروع (Project Charter)', en: 'Project Charter' },
+    desc: {
+      ar: 'قالب PMI لميثاق المشروع — يشمل النطاق، أصحاب المصلحة، الميزانية.',
+      en: 'PMI project charter with scope, stakeholders, budget, and approvals.',
+    },
+    markdown: {
+      ar: `# ميثاق المشروع: [اسم المشروع]
+
+**رقم المشروع:** [...]
+**الراعي:** [...]
+**مدير المشروع:** [...]
+**تاريخ البدء:** [...]
+**تاريخ الإنجاز:** [...]
+**الميزانية المعتمدة:** [...]
+
+## 1. الغرض من المشروع
+## 2. أهداف المشروع (SMART)
+## 3. النطاق (Scope)
+### داخل النطاق
+### خارج النطاق
+## 4. المخرجات (Deliverables)
+| المخرج | الوصف | تاريخ التسليم | المسؤول |
+|--------|--------|----------------|----------|
+| [...] | [...] | [...] | [...] |
+
+## 5. أصحاب المصلحة (Stakeholders)
+| الاسم/الجهة | الدور | التوقعات | قوة التأثير |
+|--------------|--------|-----------|--------------|
+| [...] | [...] | [...] | [...] |
+
+## 6. الجدول الزمني (High-level)
+## 7. الميزانية
+## 8. المخاطر الأولية
+## 9. معايير القبول
+## 10. الموافقات
+| الاسم | الدور | التوقيع | التاريخ |
+|-------|------|----------|---------|
+| [...] | [...] | _________ | [...] |`,
+    },
+  },
+
+  /* ── 15. سياسة / إجراء SOP ── */
+  {
+    id: 'sop', icon: '⚙️', category: 'ops', tags: ['SOP', 'إجراء', 'سياسة'],
+    name: { ar: 'سياسة / إجراء تشغيلي (SOP)', en: 'Standard Operating Procedure' },
+    desc: {
+      ar: 'قالب SOP احترافي — يشمل الغرض، النطاق، المسؤوليات، الخطوات.',
+      en: 'Professional SOP template with purpose, scope, responsibilities, and steps.',
+    },
+    markdown: {
+      ar: `# سياسة / إجراء تشغيلي
+
+**الاسم:** [...]
+**رقم الإصدار:** v1.0
+**تاريخ السريان:** [...]
+**المراجعة القادمة:** [...]
+**مالك السياسة:** [...]
+**الاعتماد:** [...]
+
+## 1. الغرض (Purpose)
+## 2. النطاق (Scope)
+## 3. التعريفات (Definitions)
+## 4. المسؤوليات (Responsibilities)
+| الدور | المسؤولية |
+|-------|------------|
+| [...] | [...] |
+
+## 5. الإجراء (Procedure)
+### الخطوة 1: [...]
+- **الوصف:**
+- **المسؤول:**
+- **الوثائق:**
+
+## 6. النماذج والمستندات ذات الصلة
+## 7. الاستثناءات
+## 8. المخالفات والعقوبات
+## 9. المراجعة والتحديث
+## 10. سجل التغييرات
+| الإصدار | التاريخ | التغيير | المسؤول |
+|---------|---------|---------|----------|
+| 1.0 | [...] | الإصدار الأول | [...] |`,
+    },
+  },
+
+  /* ── 16. عرض تقديمي ── */
+  {
+    id: 'presentation', icon: '🖥️', category: 'presentations', tags: ['عرض', 'PowerPoint', 'Pitch'],
+    name: { ar: 'سكربت عرض تقديمي (Pitch)', en: 'Pitch Presentation Script' },
+    desc: {
+      ar: 'قالب 12 شريحة لعرض مشروع أو فكرة.',
+      en: '12-slide pitch template for presenting a project or idea.',
+    },
+    markdown: {
+      ar: `# عرض تقديمي: [اسم المشروع]
+
+## الشريحة 1: الغلاف
+- **العنوان:** [...]
+- **المتحدث:** [...]
+
+## الشريحة 2: المشكلة
+## الشريحة 3: الحل
+## الشريحة 4: السوق (TAM/SAM/SOM)
+## الشريحة 5: المنتج
+## الشريحة 6: نموذج العمل
+## الشريحة 7: الجذب (Traction)
+## الشريحة 8: المنافسة
+| المنافس | الميزة |
+|---------|--------|
+| [...] | [...] |
+
+## الشريحة 9: الفريق
+## الشريحة 10: الخطة المالية
+## الشريحة 11: الطلب (Ask)
+## الشريحة 12: شكرًا + تواصل`,
+    },
+  },
+
+  /* ── 17. تحليل SWOT ── */
+  {
+    id: 'swot', icon: '🔎', category: 'analysis', tags: ['تحليل', 'SWOT'],
+    name: { ar: 'تحليل SWOT مفصّل', en: 'Detailed SWOT Analysis' },
+    desc: {
+      ar: 'قالب تحليل SWOT مع أسئلة إرشادية لكل ربع.',
+      en: 'SWOT analysis with guiding questions and TOWS matrix.',
+    },
+    markdown: {
+      ar: `# تحليل SWOT: [اسم الشركة/المشروع]
+
+## 1. مقدمة
+## 2. نقاط القوة (Strengths)
+| # | النقطة | الدليل |
+|---|--------|--------|
+| 1 | [...] | [...] |
+
+## 3. نقاط الضعف (Weaknesses)
+## 4. الفرص (Opportunities)
+## 5. التهديدات (Threats)
+
+## 6. مصفوفة TOWS (الاستراتيجيات)
+| | **فرص (O)** | **تهديدات (T)** |
+|---|-------------|------------------|
+| **قوة (S)** | SO | ST |
+| **ضعف (W)** | WO | WT |
+
+## 7. الخطة التنفيذية
+## 8. الخلاصة`,
+    },
+  },
+
+  /* ── 18. خطة شركة ناشئة ── */
+  {
+    id: 'startup', icon: '🚀', category: 'entrepreneur', tags: ['ستارتب', 'ريادة'],
+    name: { ar: 'خطة شركة ناشئة (Startup)', en: 'Startup Plan' },
+    desc: {
+      ar: 'قالب Lean Canvas + خطة نمو — مناسب للمسابقات وحاضنات الأعمال.',
+      en: 'Lean Canvas + growth plan — perfect for pitch competitions and incubators.',
+    },
+    markdown: {
+      ar: `# خطة شركة ناشئة: [الاسم]
+
+## 1. Lean Canvas
+| العنصر | المحتوى |
+|--------|----------|
+| **المشكلة** | [...] |
+| **شرائح العملاء** | [...] |
+| **القيمة الفريدة** | [...] |
+| **الحل** | [...] |
+| **القنوات** | [...] |
+| **مصادر الإيراد** | [...] |
+| **هيكل التكاليف** | [...] |
+| **المؤشرات الرئيسية** | [...] |
+| **الميزة غير العادلة** | [...] |
+
+## 2. المشكلة
+## 3. الحل
+## 4. السوق
+## 5. نموذج الإيراد
+## 6. التسويق والنمو
+- **قنوات الاكتساب:**
+- **CAC / LTV:**
+## 7. الفريق
+## 8. الجدول الزمني
+## 9. المالية
+## 10. احتياج التمويل
+## 11. المخاطر والخطة البديلة`,
+    },
+  },
+
+  /* ── 19. سيرة ATS ── */
+  {
+    id: 'ats-cv', icon: '📄', category: 'jobs', tags: ['سيرة', 'وظيفة', 'ATS'],
+    name: { ar: 'سيرة ذاتية متوافقة مع ATS', en: 'ATS-Optimized CV' },
+    desc: {
+      ar: 'قالب بسيط بعمود واحد، بلا جداول أو صور — يضمن قراءة أنظمة ATS بنسبة 100%.',
+      en: 'Single-column clean template, fully parseable by Applicant Tracking Systems.',
+    },
+    markdown: {
+      ar: `# [اسمك الكامل]
+
+**المسمى الوظيفي:** [مثال: مهندس برمجيات]
+**البريد:** [email@example.com]
+**الجوال:** [+966xxxxxxxxx]
+**الموقع:** [الرياض، السعودية]
+**LinkedIn:** [linkedin.com/in/username]
+**GitHub:** [github.com/username]
 
 ---
 
 ## الملخص المهني
-مهندس برمجيات بخبرة تفوق 6 سنوات في بناء التطبيقات السحابية عالية الأداء ومنظومات معالجة النصوص، متخصص في React وTypeScript وNode.js.
+[3-4 أسطر تُلخّص خبرتك + إنجاز + ما تبحث عنه]
 
-## الخبرات العملية
-### مهندس برمجيات أول — [اسم الشركة]
-**[2022 - الآن] | [الرياض]**
-- قيادة فريق من 5 مهندسين لتطوير منصة تخدم أكثر من 200,000 مستخدم نشط شهرياً.
-- تحسين سرعة معالجة المستندات بنسبة 45% من خلال معالجة متوازية Client-Side.
+---
 
+## المهارات
+**لغات البرمجة:** JavaScript, TypeScript, Python, SQL
+**أطر العمل:** React, Next.js, Node.js
+**قواعد البيانات:** PostgreSQL, MongoDB
+**DevOps:** Docker, Kubernetes, AWS
+**المهارات الشخصية:** القيادة، التواصل، حل المشكلات
+
+---
+
+## الخبرة العملية
+
+### [المسمى الوظيفي] — [اسم الشركة]
+**[المدينة] | [شهر/سنة] – [شهر/سنة]**
+- [إنجاز 1 بصيغة فعل + مقياس]
+- [إنجاز 2]
+- [إنجاز 3]
+
+### [المسمى الوظيفي] — [اسم الشركة]
+- [إنجاز]
+
+---
+
+## المشاريع
+### [اسم المشروع]
+- **التقنيات:**
+- **الوصف:**
+- **النتيجة:**
+
+---
+
+## التعليم
+### [اسم الدرجة] — [التخصص]
+**[اسم الجامعة] | [سنة التخرج]**
+- GPA: [...] / 4.0
+- مرتبة الشرف: [إن وُجد]
+
+---
+
+## الشهادات
+- [AWS Certified...]
+- [Meta Front-End...]
+
+---
+
+## اللغات
+- **العربية:** اللغة الأم
+- **الإنجليزية:** متقدم (IELTS 7.0)`,
+    },
+  },
+
+  /* ── 20. سيرة أكاديمية ── */
+  {
+    id: 'academic-cv', icon: '🎓', category: 'jobs', tags: ['أكاديمي', 'سيرة', 'باحث'],
+    name: { ar: 'سيرة ذاتية أكاديمية (Academic CV)', en: 'Academic CV' },
+    desc: {
+      ar: 'قالب CV أكاديمي — يشمل المنشورات، المؤتمرات، التدريس، والمنح.',
+      en: 'Academic CV with publications, conferences, teaching, and grants.',
+    },
+    markdown: {
+      ar: `# [الاسم الكامل]
+
+**الدرجة العلمية:** [دكتوراه / ماجستير]
+**التخصص:** [...]
+**الجامعة:** [...]
+**البريد:** [...]
+**ORCID:** [...]
+**Google Scholar:** [...]
+
+---
+
+## الاهتمامات البحثية
+## التعليم
+### [دكتوراه في ...]
+### [ماجستير في ...]
+### [بكالوريوس في ...]
+
+## المناصب الأكاديمية
+| المنصب | المؤسسة | من | إلى |
+|--------|---------|-----|------|
+| [...] | [...] | [...] | [...] |
+
+## المنشورات
+### مقالات محكّمة
+1. [...]
+### كتب / فصول
+### مؤتمرات
+
+## المشاريع البحثية الممولة
+## التدريس
+| المقرر | المستوى | المؤسسة | السنة |
+|--------|----------|---------|-------|
+| [...] | [...] | [...] | [...] |
+
+## الجوائز والتكريمات
+## الخدمة المجتمعية والأكاديمية
+## المهارات
+## المراجع`,
+    },
+  },
+
+  /* ── 21. سيرة إبداعية ── */
+  {
+    id: 'creative-cv', icon: '🎨', category: 'jobs', tags: ['إبداعي', 'تصميم', 'Portfolio'],
+    name: { ar: 'سيرة ذاتية إبداعية / تصميم', en: 'Creative CV / Designer' },
+    desc: {
+      ar: 'قالب سيرة للمصممين والمبدعين — يركز على الأعمال والـ Portfolio.',
+      en: 'Creative CV focused on portfolio and design work.',
+    },
+    markdown: {
+      ar: `# [اسمك] — [التخصص]
+
+**المسمى:** [مصمم جرافيك / مصمم UI/UX]
+**البريد:** [...]
+**الموقع:** [behance.net/...]
+**Portfolio:** [...]
+
+## نبذة
 ## المهارات التقنية
-- **لغات البرمجة:** TypeScript, JavaScript, Python, SQL.
-- **أطر العمل:** React, Next.js, Node.js, Express, Tailwind CSS.
-- **قواعد البيانات:** PostgreSQL, MongoDB, Redis.
-`,
-      en: `# [Full Name]
+## الأعمال (Portfolio)
+### 1. [اسم المشروع] — [السنة]
+- **العميل:**
+- **الدور:**
+- **الأدوات:**
+- **الرابط:**
 
-**Senior Software Engineer**
-📧 [email@example.com] | 📱 [+1 555-0199] | 📍 [San Francisco, CA]
-🔗 [linkedin.com/in/profile] | 💻 [github.com/username]
-
----
-
-## Professional Summary
-Results-oriented software engineer with 6+ years of experience engineering high-throughput web applications, document parsing engines, and modern React architectures.
-
-## Work Experience
-### Senior Software Engineer — [Tech Corp]
-**[2022 - Present]**
-- Architected client-side document export pipeline handling 200K+ monthly files.
-- Decreased end-to-end rendering latency by 45%.
-`,
+## الخبرة العملية
+## التعليم
+## الجوائز
+## المعارض
+## اللغات`,
     },
   },
+
+  /* ── 22. رسالة تغطية ── */
   {
-    id: 'academic-cv',
-    icon: '🎓',
-    category: 'jobs',
-    name: { ar: 'سيرة ذاتية أكاديمية', en: 'Academic Curriculum Vitae (CV)' },
+    id: 'cover-letter', icon: '✉️', category: 'jobs', tags: ['وظيفة', 'تغطية', 'تقديم'],
+    name: { ar: 'رسالة تغطية (Cover Letter)', en: 'Cover Letter' },
     desc: {
-      ar: 'بيانات شخصية → الاهتمامات البحثية → التعليم → المنشورات العلمية → المؤتمرات → التدريس والمنح',
-      en: 'Research Interests → Education → Peer-Reviewed Publications → Grants & Awards → Teaching Experience',
+      ar: 'رسالة تغطية احترافية جاهزة للتخصيص — بنسخة عربية وإنجليزية.',
+      en: 'Professional cover letter template — Arabic & English versions.',
     },
     markdown: {
-      ar: `# السيرة الذاتية الأكاديمية (Curriculum Vitae)
+      ar: `# رسالة تغطية
 
-**د. [الاسم الكامل]**
-أستاذ مساعد في علوم الحاسب والذكاء الاصطناعي
-قسم علوم الحاسب — [اسم الجامعة]
+[اسمك الكامل]
+[العنوان]
+[المدينة، الدولة]
+[البريد الإلكتروني]
+[رقم الجوال]
+[LinkedIn]
+
+[التاريخ]
+
+**إلى:**
+[اسم المسؤول عن التوظيف]
+[المسمى الوظيفي للمسؤول]
+[اسم الشركة]
+
+**الموضوع: التقديم على وظيفة [المسمى الوظيفي]**
+
+عزيزي/عزيزتي [اسم المسؤول]،
+
+**1. الافتتاحية — اجذب الانتباه:**
+أكتب إليكم للتقدم لوظيفة [المسمى الوظيفي]...
+
+**2. الفقرة الوسطى — أثبت قيمتك:**
+خلال عملي في [الشركة السابقة]، قمت بـ [إنجاز مهم + رقم]...
+
+**3. الملاءمة للشركة:**
+تابعت باهتمام [إنجاز/خبر/منتج حديث للشركة]...
+
+**4. الختام:**
+أرفق سيرتي الذاتية للاطلاع...
+
+مع خالص التقدير،
+[توقيعك]
+[اسمك الكامل]
 
 ---
 
-## 1. الاهتمامات البحثية
-معالجة اللغات الطبيعية (NLP)، استرجاع المعلومات، هندسة البرمجيات التوليدية.
-
-## 2. المؤهلات العلمية
-- **دكتوراه في علوم الحاسب** — جامعة [اسم الجامعة]، 2021.
-- **ماجستير في هندسة البرمجيات** — جامعة [اسم الجامعة]، 2017.
-
-## 3. الأوراق العلمية والمنشورات المحكّمة
-1. [اسم البحث الأول]، مجلة IEEE Transactions on Software Engineering, 2023.
-2. [اسم البحث الثاني]، مؤتمر ACM SIGKDD, 2022.
-`,
-      en: `# Academic Curriculum Vitae
-
-**Dr. [Full Name]**
-Assistant Professor of Computer Science
-Department of Computer Science — [University Name]
-
----
-
-## Research Interests
-Natural Language Processing, Generative AI Systems, Information Extraction.
-
-## Education
-- **Ph.D. in Computer Science** — [University Name], 2021.
-- **M.S. in Software Engineering** — [University Name], 2017.
-`,
+## نصائح مهمة
+✅ **خصّص الرسالة لكل وظيفة**
+✅ **استخدم اسم المسؤول** إن أمكن
+✅ **أضف رقمًا واحدًا على الأقل**
+✅ **لا تتجاوز صفحة واحدة**
+❌ **لا تكرر سيرتك الذاتية حرفيًا**`,
     },
   },
+
+  /* ── 23. خطة درس ── */
   {
-    id: 'cover-letter',
-    icon: '✉️',
-    category: 'jobs',
-    name: { ar: 'خطاب تقديم وظيفة (Cover Letter)', en: 'Job Application Cover Letter' },
+    id: 'lesson-plan', icon: '📚', category: 'education', tags: ['تعليم', 'درس', 'مدرس'],
+    name: { ar: 'خطة درس يومية (Lesson Plan)', en: 'Lesson Plan' },
     desc: {
-      ar: 'بيانات المرسل والمستقبل → التحية المهنية → الافتتاحية القوية → الإنجازات المتقاطعة → خاتمة احترافية',
-      en: 'Sender & Recipient Header → Salutation → Compelling Hook → Value Alignment → Professional Sign-off',
+      ar: 'قالب خطة درس متوافق مع معايير التعليم.',
+      en: 'Standards-aligned lesson plan template.',
     },
     markdown: {
-      ar: `# خطاب تقديم على وظيفة (Cover Letter)
+      ar: `# خطة درس
 
-**التاريخ:** [التاريخ الحالي]
-**إلى:** مدير التوظيف الموقر
-**الشركة:** [اسم الشركة المستهدفة]
+**المدرسة:** [...]
+**المعلم:** [...]
+**المادة:** [...]
+**الصف:** [...]
+**الوحدة:** [...]
+**الدرس:** [...]
+**التاريخ:** [...]
+**المدة:** [45 دقيقة]
+**عدد الطلاب:** [...]
 
----
+## 1. الأهداف التعليمية
+1. [يتعرف على ...] — تذكر
+2. [يشرح ...] — فهم
+3. [يطبق ...] — تطبيق
+4. [يحلل ...] — تحليل
 
-**السلام عليكم ورحمة الله وبركاته،**
+## 2. المعايير المرتبطة
+## 3. المفاهيم الأساسية
+## 4. المتطلبات السابقة
+## 5. المواد والأدوات
+## 6. التهيئة (5 دقائق)
+## 7. العرض (15 دقيقة)
+| الوقت | النشاط | دور المعلم | دور الطالب |
+|-------|--------|-------------|-------------|
+| 5 د | شرح | يشرح ويسأل | يستمع ويجيب |
 
-يسرني التقدم لشغل منصب **[اسم الوظيفة]** في **[اسم الشركة]**، بعد متابعة دقيقة لمشاريعكم وإنجازاتكم الملهمة في قطاع التقنية.
-
-من خلال خبرتي الممتدة لأكثر من 5 سنوات في هذا المجال، نجحت في قيادة مبادرات مماثلة أسفرت عن رفع الكفاءة بنسبة 30% وتحقيق الأهداف المحددة قبل موعدها النهائي. أؤمن أن مهاراتي في [اسم المهارة 1] و [اسم المهارة 2] ستشكل إضافة نوعية لفريق عملكم المميز.
-
-أتطلع بشوق لمناقشة كيفية مساهمتي في نجاح مشاريعكم القادمة في مقابلة شخصية.
-
-**وتفضلوا بقبول فائق التحية والتقدير،**
-
-**[اسمك الكامل]**
-[رقم الهاتف] | [البريد الإلكتروني]
-`,
-      en: `# Professional Cover Letter
-
-**Date:** [Current Date]
-**To:** Hiring Manager, [Target Company]
-
----
-
-**Dear Hiring Manager,**
-
-I am writing to express my strong enthusiasm for the **[Job Title]** position at **[Company Name]**. Having followed your team's innovative launches, I am eager to contribute my 5+ years of software engineering expertise to your mission.
-
-In my previous role, I spearheaded initiatives that optimized document processing workflows by 35% and scaled user engagement. My background aligns directly with the core requirements outlined in your opening.
-
-Thank you for your time and consideration. I welcome the opportunity to discuss my qualifications in an interview.
-
-**Sincerely,**
-
-**[Your Full Name]**
-`,
+## 8. التطبيق (15 دقيقة)
+## 9. الختام (5 دقائق)
+## 10. التقييم
+### التقييم التكويني
+### التقييم الختامي
+## 11. التمايز (Differentiation)
+## 12. الانعكاس بعد الدرس`,
     },
   },
+
+  /* ── 24. عقد / اتفاقية ── */
   {
-    id: 'sop',
-    icon: '⚙️',
-    category: 'ops',
-    name: { ar: 'سياسة وإجراء تشغيلي قياسي (SOP)', en: 'Standard Operating Procedure (SOP)' },
+    id: 'contract', icon: '📜', category: 'law', tags: ['عقد', 'اتفاقية', 'قانون'],
+    name: { ar: 'قالب عقد / اتفاقية', en: 'Contract Template' },
     desc: {
-      ar: 'رمز الوثيقة → الغرض → النطاق → المسؤوليات → خطوات التنفيذ المفصلة → معايير الجودة والتدقيق',
-      en: 'Document ID → Purpose → Scope → Responsibilities → Step-by-Step Procedure → Quality Verification',
+      ar: 'قالب عقد خدمات مع البنود الأساسية.',
+      en: 'Service contract template with core clauses.',
     },
     markdown: {
-      ar: `# إجراء تشغيلي قياسي (Standard Operating Procedure - SOP)
+      ar: `# عقد [نوع العقد]
 
-**رقم الوثيقة:** SOP-OPS-2026-01
-**الإصدار:** 1.2
-**القسم المسؤول:** إدارة العمليات وضمان الجودة
+**الطرف الأول:** [...]
+**الطرف الثاني:** [...]
+**التاريخ:** [...]
+
+## 1. التمهيد
+## 2. التعريفات
+## 3. موضوع العقد
+## 4. التزامات الطرف الأول
+## 5. التزامات الطرف الثاني
+## 6. المقابل المالي
+- **المبلغ:**
+- **طريقة الدفع:**
+## 7. المدة
+## 8. السرية
+## 9. الملكية الفكرية
+## 10. الإخلال بالعقد
+## 11. القوة القاهرة
+## 12. تسوية النزاعات
+## 13. القانون الواجب التطبيق
+## 14. التوقيعات
+| الطرف | الاسم | التوقيع | التاريخ |
+|-------|------|----------|---------|
+| الأول | [...] | _________ | [...] |
+| الثاني | [...] | _________ | [...] |`,
+    },
+  },
+
+  /* ── 25. تقرير مختبر ── */
+  {
+    id: 'lab-report', icon: '🧪', category: 'science', tags: ['مختبر', 'تجربة', 'علوم'],
+    name: { ar: 'تقرير مختبر علمي', en: 'Lab Report' },
+    desc: {
+      ar: 'قالب تقرير تجربة مخبرية — يشمل الهدف، الأدوات، الخطوات، النتائج، والمناقشة.',
+      en: 'Lab report with objective, equipment, procedure, results, and discussion.',
+    },
+    markdown: {
+      ar: `# تقرير مختبر: [اسم التجربة]
+
+**المقرر:** [...]
+**الطالب:** [...]
+**الرقم الجامعي:** [...]
+**المجموعة:** [...]
+**المشرف:** [...]
+**التاريخ:** [...]
+
+## 1. الهدف من التجربة
+## 2. الأدوات والمواد
+## 3. الخلفية النظرية
+## 4. الخطوات العملية
+## 5. البيانات والملاحظات
+| المحاولة | [المتغير 1] | [المتغير 2] | [النتيجة] |
+|----------|---------------|---------------|-----------|
+| 1 | [...] | [...] | [...] |
+
+## 6. الحسابات
+## 7. الرسوم البيانية
+## 8. النتائج
+## 9. المناقشة
+- **تفسير النتائج:**
+- **مصادر الخطأ:**
+- **مقارنة مع القيم المتوقعة:**
+
+## 10. الاستنتاج
+## 11. المراجع`,
+    },
+  },
+
+  /* ── 26. مشروع معماري ── */
+  {
+    id: 'architecture', icon: '🏛️', category: 'architecture', tags: ['عمارة', 'تصميم', 'بناء'],
+    name: { ar: 'مشروع تصميم معماري', en: 'Architectural Design Project' },
+    desc: {
+      ar: 'قالب مشروع معماري يشمل تحليل الموقع، البرنامج الوظيفي، والتصاميم.',
+      en: 'Architectural design project with site analysis, space program, and drawings.',
+    },
+    markdown: {
+      ar: `# مشروع تصميم معماري: [اسم المشروع]
+
+**الطالب:** [...]
+**المشرف:** [...]
+**السنة:** [...]
+
+## 1. المقدمة
+## 2. تحليل الموقع (Site Analysis)
+- **الموقع:**
+- **المساحة:**
+- **المناخ:**
+- **الاتجاهات:**
+- **الوصول:**
+
+## 3. البرنامج الوظيفي (Space Program)
+| الفراغ | العدد | المساحة | المتطلبات |
+|--------|-------|----------|-------------|
+| [...] | [...] | [...] | [...] |
+
+## 4. المفهوم التصميمي (Concept)
+## 5. المخططات (Plans)
+## 6. المواد والتشطيبات
+## 7. الاستدامة
+## 8. التقديرات المالية
+## 9. المراجع واللوحات`,
+    },
+  },
+
+  /* ── 27. مقترح دكتوراه ── */
+  {
+    id: 'phd-proposal', icon: '🎓', category: 'research', tags: ['دكتوراه', 'بحث', 'مقترح'],
+    name: { ar: 'مقترح خطة بحث دكتوراه', en: 'PhD Research Proposal' },
+    desc: {
+      ar: 'قالب مقترح بحث للدكتوراه — مفصل مع خطة زمنية وأدبيات.',
+      en: 'Detailed PhD proposal with timeline and literature review.',
+    },
+    markdown: {
+      ar: `# مقترح بحث دكتوراه
+
+**الطالب:** [...]
+**القسم:** [...]
+**المشرف:** [...]
+**اللجنة:** [...]
+**العنوان:** [...]
+
+## 1. مقدمة عامة
+## 2. مشكلة البحث
+## 3. أسئلة البحث
+## 4. أهداف البحث
+## 5. أهمية البحث
+## 6. الحدود
+## 7. الإطار النظري
+## 8. الدراسات السابقة
+| الباحث | السنة | العنوان | المنهج | النتائج |
+|--------|-------|---------|--------|---------|
+| [...] | [...] | [...] | [...] | [...] |
+
+## 9. الفجوة البحثية
+## 10. المنهجية
+## 11. خطة العمل
+| السنة | المهام | المخرجات |
+|-------|--------|----------|
+| 1 | [...] | [...] |
+| 2 | [...] | [...] |
+| 3 | [...] | [...] |
+
+## 12. الميزانية
+## 13. المراجع`,
+    },
+  },
+
+  /* ── 28. تقرير استدامة ── */
+  {
+    id: 'sustainability', icon: '🌱', category: 'science', tags: ['استدامة', 'بيئة', 'ESG'],
+    name: { ar: 'تقرير استدامة / ESG', en: 'Sustainability / ESG Report' },
+    desc: {
+      ar: 'قالب تقرير استدامة بمعايير ESG — مناسب للشركات.',
+      en: 'ESG sustainability report template for companies.',
+    },
+    markdown: {
+      ar: `# تقرير الاستدامة [السنة]
+
+**الشركة:** [...]
+**القطاع:** [...]
+**الفترة:** [...]
+
+## 1. رسالة الرئيس التنفيذي
+## 2. نبذة عن الشركة
+## 3. منهجية التقرير
+- **المعايير:** GRI / SASB / TCFD
+## 4. الأداء البيئي (E)
+### 4.1 الطاقة
+### 4.2 المياه
+### 4.3 النفايات
+### 4.4 الانبعاثات
+| النطاق | الوحدة | القيمة |
+|--------|--------|--------|
+| Scope 1 | tCO2e | [...] |
+| Scope 2 | tCO2e | [...] |
+| Scope 3 | tCO2e | [...] |
+
+## 5. الأداء الاجتماعي (S)
+## 6. الحوكمة (G)
+## 7. الأهداف المستقبلية
+## 8. مؤشرات GRI
+## 9. الملاحق`,
+    },
+  },
+
+  /* ── 29. تقرير إعلامي ── */
+  {
+    id: 'media-report', icon: '📰', category: 'media', tags: ['إعلام', 'صحافة', 'تقرير'],
+    name: { ar: 'تقرير إعلامي / تحقيق صحفي', en: 'Journalistic Report' },
+    desc: {
+      ar: 'قالب تحقيق صحفي مع العنوان، الليد، الجسم، والمصادر.',
+      en: 'Journalism report with headline, lead, body, and sources.',
+    },
+    markdown: {
+      ar: `# [العنوان الرئيسي]
+
+**العنوان الفرعي:** [...]
+**الكاتب:** [...]
+**القسم:** [...]
+**التاريخ:** [...]
 
 ---
 
-## 1. الغرض من الإجراء
-توحيد خطوات معالجة وفحص المستندات لضمان عدم وجود أخطاء في المخرجات الرقمية ومطابقتها للمعايير المؤسسية.
+## الليد (Lead)
+[الفقرة الأولى — من، ماذا، متى، أين، لماذا، كيف]
 
-## 2. النطاق
-يطبق هذا الإجراء على كافة موظفي الإدارة وفرق الدعم الفني.
+## الجسم
+### الفقرة 1: الخلفية
+### الفقرة 2: التفاصيل
+### الفقرة 3: الآراء
+### الفقرة 4: السياق
+### الفقرة 5: التأثير
 
-## 3. الخطوات التنفيذية
-1. استلام الطلب ومطابقة البيانات المدخلة.
-2. تشغيل الفحص الآلي للأخطاء الإملائية والمعادلات.
-3. اعتماد التصدير وحفظ نسخة احتياطية في السجل.
-`,
-      en: `# Standard Operating Procedure (SOP)
+## المصادر
+1. [الاسم]، [المنصب] — مقابلة [التاريخ]
+2. [الوثيقة الرسمية]
 
-**Document ID:** SOP-OPS-2026-01 | **Version:** 1.2
-**Department:** Quality Assurance & Operations
+## ملاحظات التحرير
+- **الطول:** [...] كلمة
+- **الصور:** [...]
+- **الوسوم:** [...]`,
+    },
+  },
 
----
+  /* ── 30. مشروع عام ── */
+  {
+    id: 'general-project', icon: '📁', category: 'projects', tags: ['مشروع', 'عام'],
+    name: { ar: 'قالب عام لأي مشروع', en: 'General Project Template' },
+    desc: {
+      ar: 'قالب مرن يناسب أي مشروع — يُخصّص بسهولة.',
+      en: 'Flexible template for any project — easy to customize.',
+    },
+    markdown: {
+      ar: `# [عنوان المشروع]
 
-## 1. Purpose & Scope
-Standardizes document validation protocols prior to executive delivery, ensuring 100% compliance with corporate guidelines.
-`,
+**الفريق:** [...]
+**التاريخ:** [...]
+**الإصدار:** [...]
+
+## 1. الملخص
+## 2. المقدمة
+## 3. الأهداف
+## 4. النطاق
+## 5. المنهجية
+## 6. الجدول الزمني
+## 7. الميزانية
+## 8. المخاطر
+## 9. المخرجات
+## 10. التقييم
+## 11. المراجع`,
+    },
+  },
+
+  /* ── 31. خطة فعالية ── */
+  {
+    id: 'event', icon: '🎪', category: 'events', tags: ['فعالية', 'مؤتمر', 'حملة'],
+    name: { ar: 'خطة فعالية / مؤتمر', en: 'Event Plan' },
+    desc: {
+      ar: 'قالب تخطيط فعالية متكامل — يشمل البرنامج، الميزانية، واللوجستيات.',
+      en: 'Event planning template with agenda, budget, and logistics.',
+    },
+    markdown: {
+      ar: `# خطة فعالية: [اسم الفعالية]
+
+**التاريخ:** [...]
+**المكان:** [...]
+**عدد الحضور المتوقع:** [...]
+**الميزانية:** [...]
+**المسؤول:** [...]
+
+## 1. الهدف
+## 2. الجمهور المستهدف
+## 3. الفكرة والموضوع
+## 4. البرنامج
+| الوقت | النشاط | المتحدث/المسؤول |
+|-------|--------|------------------|
+| [...] | [...] | [...] |
+
+## 5. الميزانية
+## 6. الترويج
+## 7. اللوجستيات
+## 8. الفريق
+## 9. إدارة المخاطر
+## 10. التقييم
+## 11. ما بعد الفعالية`,
+    },
+  },
+
+  /* ── 32. خطة تعلم ── */
+  {
+    id: 'learning-plan', icon: '🎯', category: 'education', tags: ['تعلّم', 'مهارة', 'خطة'],
+    name: { ar: 'خطة تعلّم مهارة / لغة', en: 'Skill Learning Plan' },
+    desc: {
+      ar: 'قالب خطة تعلّم ذاتي — أهداف، موارد، جدول أسبوعي، وتقييم تقدم.',
+      en: 'Self-learning plan with goals, resources, weekly schedule, and progress tracking.',
+    },
+    markdown: {
+      ar: `# خطة تعلّم: [المهارة/اللغة]
+
+**المتعلّم:** [...]
+**المستوى الحالي:** [مبتدئ / متوسط / متقدم]
+**المستوى المستهدف:** [...]
+**المدة:** [من ... إلى ...]
+**الساعات الأسبوعية:** [...] ساعة
+**المدرب/المشرف:** [...]
+
+## 1. الهدف الذكي (SMART)
+| العنصر | التفصيل |
+|--------|----------|
+| **Specific** | [...] |
+| **Measurable** | [...] |
+| **Achievable** | [...] |
+| **Relevant** | [...] |
+| **Time-bound** | [...] |
+
+## 2. تحليل الوضع الحالي
+### نقاط القوة
+### الفجوات
+### الموارد المتاحة
+
+## 3. المهارات الفرعية المستهدفة
+| # | المهارة الفرعية | مستوى الإتقان | الأسبوع |
+|---|------------------|----------------|---------|
+| 1 | [...] | [...] | [...] |
+
+## 4. الموارد والمواد التعليمية
+| المورد | النوع | التكلفة | الاستخدام |
+|--------|-------|---------|-----------|
+| [...] | [...] | [...] | [...] |
+
+## 5. الجدول الأسبوعي
+| اليوم | النشاط | المدة | المخرجات |
+|-------|--------|-------|----------|
+| السبت | [قراءة/مشاهدة] | [...] | [...] |
+| الأحد | [تطبيق عملي] | [...] | [...] |
+| الاثنين | [مراجعة] | [...] | [...] |
+| الثلاثاء | [مشروع صغير] | [...] | [...] |
+| الأربعاء | [اختبار ذاتي] | [...] | [...] |
+| الخميس | [محادثة/تغذية راجعة] | [...] | [...] |
+| الجمعة | [راحة/تعزيز] | [...] | [...] |
+
+## 6. المشاريع التطبيقية (Milestones)
+## 7. نظام التتبع والقياس
+## 8. إدارة التحديات
+## 9. معايير النجاح النهائية
+## 10. المراجع والمصادر
+## 11. المراجعة الشهرية`,
+    },
+  },
+
+  /* ── 33. تقرير تجربة علمية ── */
+  {
+    id: 'experimental-report', icon: '🔬', category: 'science', tags: ['تجربة', 'علمي', 'بحث'],
+    name: { ar: 'تقرير تجربة علمية متقدم', en: 'Advanced Experimental Report' },
+    desc: {
+      ar: 'قالب تقرير تجربة علمية متكامل — فرضية، تصميم، بيانات، تحليل إحصائي، ومناقشة.',
+      en: 'Comprehensive experimental report with hypothesis, design, data, and analysis.',
+    },
+    markdown: {
+      ar: `# تقرير تجربة علمية: [اسم التجربة]
+
+**الباحث:** [...]
+**الرقم الجامعي:** [...]
+**القسم:** [...]
+**المشرف:** [...]
+**المختبر:** [...]
+**التاريخ:** [...]
+**رقم التجربة:** [...]
+
+## 1. الملخص (Abstract)
+[150-250 كلمة: الهدف، الطريقة، النتائج، الاستنتاج]
+
+**الكلمات المفتاحية:** [...]
+
+## 2. المقدمة والخلفية النظرية
+### 2.1 السياق العلمي
+### 2.2 الدراسات السابقة
+| الدراسة | السنة | المنهج | النتائج | الفجوة |
+|---------|-------|--------|---------|--------|
+| [...] | [...] | [...] | [...] | [...] |
+
+## 3. الفرضية والأهداف
+### 3.1 الفرضية الرئيسية
+**H₁:** [صياغة قابلة للاختبار]
+**H₀:** [الفرضية الصفرية]
+
+### 3.2 الأهداف
+1. [...]
+2. [...]
+
+## 4. المواد والأدوات
+### 4.1 المواد الكيميائية/البيولوجية
+### 4.2 الأجهزة
+### 4.3 السلامة
+
+## 5. التصميم التجريبي
+### 5.1 المتغيرات
+| النوع | المتغير | المستويات |
+|-------|----------|-----------|
+| مستقل | [...] | [...] |
+| تابع | [...] | [...] |
+| ضابطة | [...] | [...] |
+
+### 5.2 العينة
+### 5.3 خطوات التنفيذ
+
+## 6. جمع البيانات
+### 6.1 القياسات
+### 6.2 البيانات الخام
+
+## 7. التحليل الإحصائي
+### 7.1 الإحصاء الوصفي
+### 7.2 الاختبارات
+| الاختبار | المتغيرات | p-value | القرار |
+|----------|-----------|---------|--------|
+| [t-test] | [...] | [...] | [...] |
+
+### 7.3 الرسوم البيانية
+
+## 8. النتائج
+## 9. المناقشة
+### 9.1 تفسير النتائج
+### 9.2 مقارنة بالأدبيات
+### 9.3 مصادر الخطأ والقيود
+### 9.4 الآثار والتطبيقات
+
+## 10. الاستنتاج
+## 11. التوصيات
+## 12. المراجع
+## 13. الملاحق`,
     },
   },
 ];
 
+/* ═══════════════════════════════════════════════════════════
+   Page Component
+   ═══════════════════════════════════════════════════════════ */
 export default function TemplatesPage() {
-  const { language, t } = useLanguage();
+  const { language } = useLanguage();
   const router = useRouter();
   const session = useSession();
   const savedDocs = useSavedDocsList();
   const [isDark, toggleTheme] = useTheme();
 
   const isAr = language === 'ar';
+
   const [selectedCat, setSelectedCat] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [previewTemplate, setPreviewTemplate] = useState<TemplateItem | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [favorites, setFavorites] = useState<Set<string>>(new Set());
+  const [toast, setToast] = useState<string>('');
+  const [mounted, setMounted] = useState(false);
 
-  const categories = [
-    { id: 'all', label: isAr ? 'الكل' : 'All' },
-    { id: 'academic', label: isAr ? 'أكاديمي وبحثي' : 'Academic' },
-    { id: 'business', label: isAr ? 'أعمال واستراتيجية' : 'Business' },
-    { id: 'reports', label: isAr ? 'تقارير أداء' : 'Reports' },
-    { id: 'engineering', label: isAr ? 'هندسة ومشاريع' : 'Engineering' },
-    { id: 'tech', label: isAr ? 'تقنية وبرمجة' : 'Tech & App' },
-    { id: 'jobs', label: isAr ? 'سير ذاتية ووظائف' : 'Careers & CVs' },
-    { id: 'ops', label: isAr ? 'تشغيل وسياسات' : 'Operations' },
-  ];
+  useEffect(() => {
+    setMounted(true);
+    try {
+      const raw = localStorage.getItem(FAV_KEY);
+      if (raw) setFavorites(new Set(JSON.parse(raw)));
+    } catch {}
+  }, []);
 
-  const filtered = TEMPLATES_LIST.filter(item => {
-    const matchesCat = selectedCat === 'all' || item.category === selectedCat;
-    const nameStr = item.name[language] || item.name.en;
-    const descStr = item.desc[language] || item.desc.en;
-    const matchesSearch =
-      !searchQuery.trim() ||
-      nameStr.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      descStr.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesCat && matchesSearch;
-  });
+  useEffect(() => {
+    if (!mounted) return;
+    try { localStorage.setItem(FAV_KEY, JSON.stringify([...favorites])); } catch {}
+  }, [favorites, mounted]);
 
-  const handleUseTemplate = (tpl: TemplateItem) => {
-    const md = tpl.markdown[language] || tpl.markdown.en;
-    const title = tpl.name[language] || tpl.name.en;
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    window.clearTimeout((showToast as any)._tid);
+    (showToast as any)._tid = window.setTimeout(() => setToast(''), 2400);
+  }, []);
 
+  const toggleFav = useCallback((id: string) => {
+    setFavorites((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+        showToast(isAr ? '💔 أُزيل من المفضلة' : '💔 Removed from favorites');
+      } else {
+        next.add(id);
+        showToast(isAr ? '⭐ أُضيف إلى المفضلة' : '⭐ Added to favorites');
+      }
+      return next;
+    });
+  }, [isAr, showToast]);
+
+  const categories = useMemo(() => {
+    const used = new Set(TEMPLATES_LIST.map((t) => t.category));
+    return ['all', 'favorites', ...Object.keys(CAT_LABELS).filter(
+      (k) => k !== 'all' && k !== 'favorites' && used.has(k)
+    )];
+  }, []);
+
+  const filtered = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
+    return TEMPLATES_LIST.filter((t) => {
+      const matchesCat =
+        selectedCat === 'all'
+          ? true
+          : selectedCat === 'favorites'
+          ? favorites.has(t.id)
+          : t.category === selectedCat;
+      if (!matchesCat) return false;
+      if (!q) return true;
+      const hay = [
+        pickName(t, language),
+        pickDesc(t, language),
+        t.category,
+        t.tags.join(' '),
+      ].join(' ').toLowerCase();
+      return hay.includes(q);
+    });
+  }, [selectedCat, searchQuery, favorites, language]);
+
+  const heroStats = useMemo(() => ({
+    count: TEMPLATES_LIST.length,
+    cats: new Set(TEMPLATES_LIST.map((t) => t.category)).size,
+    favs: favorites.size,
+  }), [favorites.size]);
+
+  const handleUseTemplate = useCallback((tpl: TemplateItem) => {
+    const md = pickMarkdown(tpl, language);
+    const title = pickName(tpl, language);
     try {
       localStorage.setItem(
         'midaddExternalTemplate',
-        JSON.stringify({
-          title,
-          markdown: md,
-          source: 'templates_page',
-        })
+        JSON.stringify({ title, markdown: md, source: 'templates_page' })
       );
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('midaddTemplateSelected'));
       }
     } catch {}
-
     router.push('/');
-  };
+  }, [language, router]);
 
-  const handleCopyMarkdown = async (tpl: TemplateItem) => {
-    const md = tpl.markdown[language] || tpl.markdown.en;
+  const handleCopy = useCallback(async (tpl: TemplateItem) => {
     try {
-      await navigator.clipboard.writeText(md);
+      await navigator.clipboard.writeText(pickMarkdown(tpl, language));
       setCopiedId(tpl.id);
+      showToast(isAr ? '✅ تم نسخ Markdown' : '✅ Markdown copied');
       setTimeout(() => setCopiedId(null), 2000);
-    } catch {}
-  };
+    } catch {
+      showToast(isAr ? 'فشل النسخ' : 'Copy failed');
+    }
+  }, [language, isAr, showToast]);
+
+  const handleDownloadMd = useCallback((tpl: TemplateItem) => {
+    const md = pickMarkdown(tpl, language);
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+    triggerDownload(blob, `${tpl.id}.md`);
+    showToast(isAr ? '⬇️ تم تنزيل الملف' : '⬇️ File downloaded');
+  }, [language, isAr, showToast]);
+
+  const handleDownloadDocx = useCallback(async (tpl: TemplateItem) => {
+    try {
+      showToast(isAr ? '⏳ جاري التحضير...' : '⏳ Preparing...');
+      const htmlDocx = await ensureHtmlDocx();
+      const md = pickMarkdown(tpl, language);
+      const htmlContent = `<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+<meta charset="utf-8">
+<style>
+  body { font-family: 'Traditional Arabic', 'Arial', sans-serif; font-size: 14pt; line-height: 1.8; direction: rtl; }
+  h1 { color: #4f46e5; font-size: 20pt; border-bottom: 2px solid #6366f1; padding-bottom: 6pt; }
+  h2 { color: #8b5cf6; font-size: 16pt; margin-top: 14pt; }
+  h3 { color: #0f172a; font-size: 14pt; }
+  strong { color: #4f46e5; }
+  code { background: #eef2ff; padding: 2pt 4pt; font-family: monospace; }
+  table { border-collapse: collapse; width: 100%; margin: 8pt 0; }
+  th, td { border: 1px solid #cbd5e1; padding: 6pt 8pt; text-align: right; }
+  th { background: #eef2ff; font-weight: bold; }
+  blockquote { border-right: 3pt solid #6366f1; padding: 4pt 8pt; background: #eef2ff; }
+  ul, ol { padding-right: 20pt; }
+  hr { border: none; border-top: 1pt dashed #cbd5e1; margin: 12pt 0; }
+</style>
+</head>
+<body>${mdToHtml(md)}</body>
+</html>`;
+      const blob = htmlDocx.asBlob(htmlContent, {
+        orientation: 'portrait',
+        margins: { top: 1440, right: 1440, bottom: 1440, left: 1440 },
+      });
+      triggerDownload(blob, `${tpl.id}.docx`);
+      showToast(isAr ? '📄 تم تنزيل Word' : '📄 Word downloaded');
+    } catch (e) {
+      console.error(e);
+      showToast(isAr ? '❌ فشل إنشاء ملف Word' : '❌ Failed to create Word file');
+    }
+  }, [language, isAr, showToast]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPreviewTemplate(null);
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        (document.getElementById('tpl-search') as HTMLInputElement | null)?.focus();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+
+  useEffect(() => {
+    if (previewTemplate) {
+      document.body.style.overflow = 'hidden';
+      return () => { document.body.style.overflow = ''; };
+    }
+  }, [previewTemplate]);
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-100/70 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors">
@@ -669,12 +2457,12 @@ export default function TemplatesPage() {
         onToggleTheme={toggleTheme}
       />
 
-      {/* Hero Section */}
+      {/* Hero */}
       <section className="relative overflow-hidden py-12 sm:py-16 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 transition-colors">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center relative z-10">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200/80 dark:border-indigo-800 text-xs font-bold mb-4">
             <Sparkles className="h-3.5 w-3.5" />
-            <span>{isAr ? 'مكتبة قوالب Word الاحترافية' : '22 Professional Word Templates'}</span>
+            <span>{isAr ? 'مكتبة مداد — 33 قالبًا' : 'Midadd Library — 33 Templates'}</span>
           </div>
 
           <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight mb-4">
@@ -684,146 +2472,236 @@ export default function TemplatesPage() {
             </span>
           </h1>
 
-          <p className="text-sm sm:text-base text-slate-600 dark:text-slate-400 max-w-2xl mx-auto leading-relaxed mb-8">
+          <p className="text-sm sm:text-base text-slate-600 dark:text-slate-400 max-w-2xl mx-auto leading-relaxed mb-6">
             {isAr
-              ? 'اختر القالب الأنسب لاحتياجاتك، عاين بنيته الكاملة، ثم انقر لفتحه فورياً داخل محرر مداد لتعديله وتصديره إلى Word (DOCX) أو PDF بنقرة واحدة.'
-              : 'Explore structured templates for graduation projects, business plans, CVs, and technical proposals. Preview the Markdown and open directly in the editor.'}
+              ? 'اختر قالبًا جاهزًا ومفصّلًا، عاينه، ثم افتحه مباشرة داخل محرر مداد لتعديله وتصديره إلى Word أو PDF.'
+              : 'Pick a detailed template, preview it, then open it directly in the Midadd editor to customize and export to Word or PDF.'}
           </p>
 
-          {/* Search bar */}
+          <div className="flex flex-wrap items-center justify-center gap-3 text-xs mb-6">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-50 dark:bg-indigo-950/60">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+              <span className="font-bold">{heroStats.count}</span>
+              <span>{isAr ? 'قالب' : 'templates'}</span>
+            </span>
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-50 dark:bg-indigo-950/60">
+              <Layers className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
+              <span className="font-bold">{heroStats.cats}</span>
+              <span>{isAr ? 'تصنيف' : 'categories'}</span>
+            </span>
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300">
+              <Star className="w-3 h-3 fill-current" />
+              <span className="font-bold">{heroStats.favs}</span>
+              <span>{isAr ? 'مفضلة' : 'favorites'}</span>
+            </span>
+          </div>
+
           <div className="max-w-xl mx-auto relative">
             <Search className="h-5 w-5 absolute top-1/2 -translate-y-1/2 left-3 rtl:left-auto rtl:right-3 text-slate-400 pointer-events-none" />
             <input
+              id="tpl-search"
               type="text"
               value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              placeholder={isAr ? 'ابحث عن قالب (مشروع تخرج، خطة عمل، سيرة ذاتية...)' : 'Search templates...'}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={isAr ? '🔎 ابحث عن قالب (مشروع تخرج، خطة عمل، سيرة ذاتية...)' : '🔎 Search templates...'}
               className="w-full pl-10 pr-4 rtl:pr-10 rtl:pl-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm"
             />
           </div>
         </div>
       </section>
 
-      {/* Category Filter Chips */}
+      {/* Category chips */}
       <div className="sticky top-16 z-30 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 py-3 transition-colors">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center gap-2 overflow-x-auto scrollbar-none">
-          {categories.map(cat => (
-            <button
-              key={cat.id}
-              onClick={() => setSelectedCat(cat.id)}
-              className={`px-3.5 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-                selectedCat === cat.id
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-              }`}
-            >
-              {cat.label}
-            </button>
-          ))}
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center gap-2 overflow-x-auto">
+          {categories.map((catKey) => {
+            const active = selectedCat === catKey;
+            const isFav = catKey === 'favorites';
+            const label =
+              catKey === 'favorites'
+                ? `${isAr ? '⭐ المفضلة' : '⭐ Favorites'}${favorites.size > 0 ? ` (${favorites.size})` : ''}`
+                : isAr
+                ? CAT_LABELS[catKey].ar
+                : CAT_LABELS[catKey].en;
+            return (
+              <button
+                key={catKey}
+                onClick={() => setSelectedCat(catKey)}
+                className={`px-3.5 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+                  active
+                    ? isFav
+                      ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-white shadow-sm'
+                      : 'bg-indigo-600 text-white shadow-sm'
+                    : isFav
+                    ? 'border border-amber-300 text-amber-700 hover:border-amber-500 dark:border-amber-800 dark:text-amber-300'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
           <span className="text-xs text-slate-400 font-semibold ml-auto rtl:ml-0 rtl:mr-auto shrink-0">
             {filtered.length} {isAr ? 'قالب' : 'templates'}
           </span>
         </div>
       </div>
 
-      {/* Templates Grid */}
+      {/* Grid */}
       <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-          {filtered.map(tpl => {
-            const title = tpl.name[language] || tpl.name.en;
-            const desc = tpl.desc[language] || tpl.desc.en;
+        {filtered.length === 0 ? (
+          <div className="text-center py-16">
+            <div className="text-6xl mb-4">{selectedCat === 'favorites' ? '⭐' : '🔍'}</div>
+            <p className="text-slate-500 dark:text-slate-400">
+              {selectedCat === 'favorites'
+                ? isAr
+                  ? 'لم تُضف أي قالب للمفضلة بعد. اضغط على النجمة في أي بطاقة لإضافتها.'
+                  : 'No favorites yet. Click the star on any card to add it.'
+                : isAr
+                ? 'لا توجد نتائج مطابقة. جرّب كلمة أخرى أو تصنيفًا مختلفًا.'
+                : 'No results. Try a different keyword or category.'}
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+            {filtered.map((tpl) => {
+              const title = pickName(tpl, language);
+              const desc = pickDesc(tpl, language);
+              const fav = favorites.has(tpl.id);
+              return (
+                <div
+                  key={tpl.id}
+                  className="relative bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 flex flex-col justify-between hover:shadow-lg hover:border-indigo-500/50 transition-all group"
+                >
+                  <button
+                    onClick={() => toggleFav(tpl.id)}
+                    className={`absolute top-3 right-3 rtl:right-auto rtl:left-3 w-8 h-8 rounded-full flex items-center justify-center transition z-10 ${
+                      fav
+                        ? 'bg-amber-100 text-amber-600 dark:bg-amber-950/60 dark:text-amber-400'
+                        : 'bg-slate-100 text-slate-400 hover:text-amber-500 dark:bg-slate-800 dark:text-slate-500'
+                    }`}
+                    aria-label={fav ? 'Remove from favorites' : 'Add to favorites'}
+                  >
+                    <Star className={`w-4 h-4 ${fav ? 'fill-current' : ''}`} />
+                  </button>
 
-            return (
-              <div
-                key={tpl.id}
-                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 flex flex-col justify-between hover:shadow-lg hover:border-indigo-500/50 transition-all group"
-              >
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-3xl p-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
-                      {tpl.icon}
+                  <div>
+                    <div className="flex items-center justify-between mb-3 pr-10">
+                      <span className="text-3xl p-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
+                        {tpl.icon}
+                      </span>
+                    </div>
+
+                    <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 uppercase mb-2">
+                      {isAr ? CAT_LABELS[tpl.category].ar : CAT_LABELS[tpl.category].en}
                     </span>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 uppercase">
-                      {tpl.category}
-                    </span>
+
+                    <h3 className="font-bold text-base text-slate-900 dark:text-white mb-2 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors leading-snug">
+                      {title}
+                    </h3>
+
+                    <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed line-clamp-3 mb-4">
+                      {desc}
+                    </p>
                   </div>
 
-                  <h3 className="font-bold text-base text-slate-900 dark:text-white mb-2 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
-                    {title}
-                  </h3>
+                  <div className="pt-3 border-t border-slate-100 dark:border-slate-800/80 flex items-center gap-2">
+                    <button
+                      onClick={() => handleUseTemplate(tpl)}
+                      className="flex-1 py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition cursor-pointer"
+                    >
+                      <span>{isAr ? 'استخدام' : 'Use'}</span>
+                      <ArrowRight className="h-3.5 w-3.5 rtl:rotate-180" />
+                    </button>
 
-                  <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed line-clamp-3 mb-4">
-                    {desc}
-                  </p>
+                    {/* 👁️ زر المعاينة بأيقونة العين */}
+                    <button
+                      onClick={() => setPreviewTemplate(tpl)}
+                      className="p-2 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 hover:border-indigo-300 dark:hover:border-indigo-700 hover:text-indigo-600 dark:hover:text-indigo-400 text-slate-700 dark:text-slate-300 transition cursor-pointer"
+                      title={isAr ? 'معاينة' : 'Preview'}
+                      aria-label={isAr ? 'معاينة القالب' : 'Preview template'}
+                    >
+                      <Eye className="h-4 w-4" />
+                    </button>
+
+                    <button
+                      onClick={() => handleCopy(tpl)}
+                      className="p-2 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition cursor-pointer"
+                      title={isAr ? 'نسخ' : 'Copy'}
+                    >
+                      {copiedId === tpl.id ? (
+                        <Check className="h-4 w-4 text-emerald-600" />
+                      ) : (
+                        <Copy className="h-4 w-4" />
+                      )}
+                    </button>
+                  </div>
                 </div>
-
-                <div className="pt-3 border-t border-slate-100 dark:border-slate-800/80 flex items-center gap-2">
-                  <button
-                    onClick={() => handleUseTemplate(tpl)}
-                    className="flex-1 py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition cursor-pointer"
-                  >
-                    <span>{isAr ? 'استخدام القالب' : 'Use Template'}</span>
-                    <ArrowRight className="h-3.5 w-3.5 rtl:rotate-180" />
-                  </button>
-
-                  <button
-                    onClick={() => setPreviewTemplate(tpl)}
-                    className="p-2 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition text-xs font-semibold cursor-pointer"
-                    title={isAr ? 'معاينة القالب' : 'Preview'}
-                  >
-                    <FileText className="h-4 w-4" />
-                  </button>
-
-                  <button
-                    onClick={() => handleCopyMarkdown(tpl)}
-                    className="p-2 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition text-xs font-semibold cursor-pointer"
-                    title={isAr ? 'نسخ Markdown' : 'Copy'}
-                  >
-                    {copiedId === tpl.id ? (
-                      <Check className="h-4 w-4 text-emerald-600" />
-                    ) : (
-                      <Copy className="h-4 w-4" />
-                    )}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </main>
 
-      {/* Preview Modal */}
+      {/* Preview modal */}
       {previewTemplate && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-3xl w-full max-h-[85vh] flex flex-col shadow-2xl overflow-hidden animate-slideDown">
-            <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <span className="text-2xl">{previewTemplate.icon}</span>
-                <div>
-                  <h3 className="font-bold text-lg text-slate-900 dark:text-white">
-                    {previewTemplate.name[language] || previewTemplate.name.en}
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    {previewTemplate.desc[language] || previewTemplate.desc.en}
-                  </p>
-                </div>
+        <div
+          className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6"
+          onClick={(e) => { if (e.target === e.currentTarget) setPreviewTemplate(null); }}
+        >
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-4xl w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden">
+            <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center gap-4">
+              <span className="text-3xl">{previewTemplate.icon}</span>
+              <div className="flex-1 min-w-0">
+                <h3 className="font-bold text-lg text-slate-900 dark:text-white truncate">
+                  {pickName(previewTemplate, language)}
+                </h3>
+                <span className="inline-block mt-1 text-[11px] font-bold px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300">
+                  {isAr ? CAT_LABELS[previewTemplate.category].ar : CAT_LABELS[previewTemplate.category].en}
+                </span>
               </div>
               <button
+                onClick={() => toggleFav(previewTemplate.id)}
+                className={`w-10 h-10 rounded-xl flex items-center justify-center border transition ${
+                  favorites.has(previewTemplate.id)
+                    ? 'bg-amber-100 text-amber-600 border-amber-300 dark:bg-amber-950/60 dark:text-amber-400'
+                    : 'border-slate-200 dark:border-slate-700 text-slate-500 hover:text-amber-500'
+                }`}
+                aria-label="Favorite"
+              >
+                <Star className={`w-5 h-5 ${favorites.has(previewTemplate.id) ? 'fill-current' : ''}`} />
+              </button>
+              <button
                 onClick={() => setPreviewTemplate(null)}
-                className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 cursor-pointer"
+                className="w-10 h-10 rounded-xl border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                aria-label="Close"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            <div className="p-5 flex-1 overflow-y-auto bg-slate-50 dark:bg-slate-950 font-mono text-xs leading-relaxed whitespace-pre-wrap text-slate-800 dark:text-slate-200 select-all">
-              {previewTemplate.markdown[language] || previewTemplate.markdown.en}
+            <div className="p-4 sm:p-6 overflow-y-auto flex-1 bg-slate-50 dark:bg-slate-950">
+              <p className="text-sm font-semibold mb-4 text-slate-600 dark:text-slate-400">
+                {pickDesc(previewTemplate, language)}
+              </p>
+              <div
+                dir={isAr ? 'rtl' : 'ltr'}
+                className="border rounded-xl p-4 sm:p-6 shadow-sm bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 md-preview prose-sm max-w-none"
+                dangerouslySetInnerHTML={{ __html: mdToHtml(pickMarkdown(previewTemplate, language)) }}
+              />
             </div>
 
-            <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 bg-white dark:bg-slate-900">
+            <div className="p-4 sm:p-6 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center gap-2 bg-white dark:bg-slate-900">
               <button
-                onClick={() => handleCopyMarkdown(previewTemplate)}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                onClick={() => handleUseTemplate(previewTemplate)}
+                className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold text-sm shadow-lg active:scale-95 transition cursor-pointer"
+              >
+                <span>{isAr ? 'استخدام القالب' : 'Use Template'}</span>
+                <ArrowRight className="h-4 w-4 rtl:rotate-180" />
+              </button>
+
+              <button
+                onClick={() => handleCopy(previewTemplate)}
+                className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-sm hover:border-indigo-500 hover:text-indigo-600 transition cursor-pointer"
               >
                 {copiedId === previewTemplate.id ? (
                   <>
@@ -833,20 +2711,35 @@ export default function TemplatesPage() {
                 ) : (
                   <>
                     <Copy className="h-4 w-4" />
-                    <span>{isAr ? 'نسخ نص القالب' : 'Copy Structure'}</span>
+                    <span>{isAr ? 'نسخ' : 'Copy'}</span>
                   </>
                 )}
               </button>
 
               <button
-                onClick={() => handleUseTemplate(previewTemplate)}
-                className="inline-flex items-center gap-1.5 px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md cursor-pointer"
+                onClick={() => handleDownloadMd(previewTemplate)}
+                className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-sm hover:border-indigo-500 hover:text-indigo-600 transition cursor-pointer"
               >
-                <span>{isAr ? 'فتح في المحرر الآن' : 'Open in Editor'}</span>
-                <ArrowRight className="h-4 w-4 rtl:rotate-180" />
+                <Download className="h-4 w-4" />
+                <span>.md</span>
+              </button>
+
+              <button
+                onClick={() => handleDownloadDocx(previewTemplate)}
+                className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-sm hover:border-indigo-500 hover:text-indigo-600 transition cursor-pointer"
+              >
+                <FileText className="h-4 w-4" />
+                <span>.docx</span>
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-6 py-3 rounded-xl text-sm font-bold shadow-2xl z-[9999]">
+          {toast}
         </div>
       )}
 

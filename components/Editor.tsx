@@ -80,7 +80,7 @@ interface EditorProps {
   documentTitle: string;
   onChangeTitle: (title: string) => void;
   onOpenInsertModal: () => void;
-  onExportDocx?: () => void;
+  onExportDocx?: (direction: 'rtl' | 'ltr') => void;
   onExportPdf?: () => void;
   onCopyGoogleDocs?: () => void;
   onSaveDoc?: () => void;
@@ -121,6 +121,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>((props, ref) => {
     watermark: '',
     showRuler: true,
     zoomLevel: 100,
+    direction: direction,
   });
 
   // Default viewMode is genuine 'docx' EigenPal editor engine!
@@ -338,7 +339,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>((props, ref) => {
   // Download real DOCX binary file from EigenPal editor
   const handleDownloadRealDocx = useCallback(async () => {
     if (session.credits <= 0) {
-      onExportDocx();
+      onExportDocx(formatting.direction);
       return;
     }
 
@@ -359,12 +360,12 @@ export const Editor = forwardRef<EditorHandle, EditorProps>((props, ref) => {
           return;
         }
       }
-      onExportDocx();
+      onExportDocx(formatting.direction);
     } catch (e) {
       console.warn('Real DOCX buffer save failed, falling back to generator:', e);
-      onExportDocx();
+      onExportDocx(formatting.direction);
     }
-  }, [documentTitle, onExportDocx, session.credits]);
+  }, [documentTitle, onExportDocx, session.credits, formatting.direction]);
 
 
   // Export PDF via genuine print pipeline
@@ -959,7 +960,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>((props, ref) => {
           onOpenFindReplaceModal={() => setShowFindReplaceModal(true)}
           onOpenWatermarkModal={() => setShowWatermarkModal(true)}
           onImportDocx={handleImportDocx}
-          onExportDocx={onExportDocx}
+          onExportDocx={() => onExportDocx(formatting.direction)}
           onExportPdf={onExportPdf}
           onCopyGoogleDocs={onCopyGoogleDocs}
           onSaveDoc={handleSaveDoc}

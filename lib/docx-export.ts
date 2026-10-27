@@ -22,6 +22,7 @@ export interface DocxExportOptions {
   fontFamily?: string;
   fontSize?: number;
   headerText?: string;
+  direction?: 'rtl' | 'ltr';
 }
 
 /**
@@ -89,12 +90,19 @@ export function generateDocxDocument(markdown: string, options?: DocxExportOptio
   let inTable = false;
   let tableRowsData: string[][] = [];
 
+  const createParagraph = (pOptions: any): Paragraph => {
+    if (options?.direction === 'rtl') {
+      pOptions.bidirectional = true;
+    }
+    return new Paragraph(pOptions);
+  };
+
   const flushCodeBlock = () => {
     if (inCodeBlock) {
       const codeText = codeBlockLines.join('\n');
       // Create code block paragraph with gray/dark shading and monospace font
       children.push(
-        new Paragraph({
+        createParagraph({
           children: [
             new TextRun({
               text: codeText,
@@ -139,7 +147,7 @@ export function generateDocxDocument(markdown: string, options?: DocxExportOptio
           const inlines = parseInlineDocx(cellText.trim());
           return new TableCell({
             children: [
-              new Paragraph({
+              createParagraph({
                 children: inlines,
                 alignment: isHeader ? AlignmentType.CENTER : AlignmentType.LEFT,
                 spacing: { before: 80, after: 80 },
@@ -184,7 +192,7 @@ export function generateDocxDocument(markdown: string, options?: DocxExportOptio
       );
 
       // Spacer after table
-      children.push(new Paragraph({ spacing: { after: 160 } }));
+      children.push(createParagraph({ spacing: { after: 160 } }));
 
       tableRowsData = [];
       inTable = false;
@@ -245,7 +253,7 @@ export function generateDocxDocument(markdown: string, options?: DocxExportOptio
       try {
         const mathChildren = parseLatexToDocxMathComponents(formula);
         children.push(
-          new Paragraph({
+          createParagraph({
             children: [new DocxMath({ children: mathChildren })],
             alignment: AlignmentType.CENTER,
             spacing: { before: 180, after: 180 },
@@ -253,7 +261,7 @@ export function generateDocxDocument(markdown: string, options?: DocxExportOptio
         );
       } catch (err) {
         children.push(
-          new Paragraph({
+          createParagraph({
             children: [new TextRun({ text: formula, italics: true })],
             alignment: AlignmentType.CENTER,
           })
@@ -274,7 +282,7 @@ export function generateDocxDocument(markdown: string, options?: DocxExportOptio
       try {
         const mathChildren = parseLatexToDocxMathComponents(formula);
         children.push(
-          new Paragraph({
+          createParagraph({
             children: [new DocxMath({ children: mathChildren })],
             alignment: AlignmentType.CENTER,
             spacing: { before: 180, after: 180 },
@@ -282,7 +290,7 @@ export function generateDocxDocument(markdown: string, options?: DocxExportOptio
         );
       } catch {
         children.push(
-          new Paragraph({
+          createParagraph({
             children: [new TextRun({ text: formula, italics: true })],
             alignment: AlignmentType.CENTER,
           })
@@ -299,7 +307,7 @@ export function generateDocxDocument(markdown: string, options?: DocxExportOptio
     // 5. Horizontal rule
     if (/^(---+|\*\*\*+|___+)$/.test(trimmed)) {
       children.push(
-        new Paragraph({
+        createParagraph({
           border: {
             bottom: { style: BorderStyle.SINGLE, size: 6, color: 'CBD5E1' },
           },
@@ -314,7 +322,7 @@ export function generateDocxDocument(markdown: string, options?: DocxExportOptio
       const quoteText = trimmed.replace(/^>\s?/, '');
       const inlines = parseInlineDocx(quoteText);
       children.push(
-        new Paragraph({
+        createParagraph({
           children: inlines,
           border: {
             left: { style: BorderStyle.SINGLE, size: 24, color: '6366F1' },
@@ -330,7 +338,7 @@ export function generateDocxDocument(markdown: string, options?: DocxExportOptio
     // 7. Headings
     if (trimmed.startsWith('# ')) {
       children.push(
-        new Paragraph({
+        createParagraph({
           text: trimmed.slice(2),
           heading: HeadingLevel.HEADING_1,
           spacing: { before: 360, after: 180 },
@@ -340,7 +348,7 @@ export function generateDocxDocument(markdown: string, options?: DocxExportOptio
     }
     if (trimmed.startsWith('## ')) {
       children.push(
-        new Paragraph({
+        createParagraph({
           text: trimmed.slice(3),
           heading: HeadingLevel.HEADING_2,
           spacing: { before: 280, after: 140 },
@@ -350,7 +358,7 @@ export function generateDocxDocument(markdown: string, options?: DocxExportOptio
     }
     if (trimmed.startsWith('### ')) {
       children.push(
-        new Paragraph({
+        createParagraph({
           text: trimmed.slice(4),
           heading: HeadingLevel.HEADING_3,
           spacing: { before: 220, after: 100 },
@@ -360,7 +368,7 @@ export function generateDocxDocument(markdown: string, options?: DocxExportOptio
     }
     if (trimmed.startsWith('#### ')) {
       children.push(
-        new Paragraph({
+        createParagraph({
           text: trimmed.slice(5),
           heading: HeadingLevel.HEADING_4,
           spacing: { before: 180, after: 80 },
@@ -374,7 +382,7 @@ export function generateDocxDocument(markdown: string, options?: DocxExportOptio
       const text = trimmed.replace(/^[-*]\s+/, '');
       const inlines = parseInlineDocx(text);
       children.push(
-        new Paragraph({
+        createParagraph({
           children: inlines,
           bullet: { level: 0 },
           spacing: { before: 60, after: 60 },
@@ -388,7 +396,7 @@ export function generateDocxDocument(markdown: string, options?: DocxExportOptio
     if (numMatch) {
       const inlines = parseInlineDocx(numMatch[1]);
       children.push(
-        new Paragraph({
+        createParagraph({
           children: [
             new TextRun({ text: trimmed.match(/^\d+\.\s+/)?.[0] || '1. ', bold: true }),
             ...inlines,
@@ -403,7 +411,7 @@ export function generateDocxDocument(markdown: string, options?: DocxExportOptio
     // 10. Normal Paragraph with inline parsing (Bold, Italic, Math, Code)
     const inlines = parseInlineDocx(line);
     children.push(
-      new Paragraph({
+      createParagraph({
         children: inlines,
         spacing: { before: 100, after: 100, line: 276 },
       })

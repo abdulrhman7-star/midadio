@@ -68,6 +68,7 @@ export interface WordFormattingOptions {
   watermark: string;
   showRuler: boolean;
   zoomLevel: number;
+  direction: 'rtl' | 'ltr';
 }
 
 interface WordRibbonProps {
@@ -489,6 +490,16 @@ export const WordRibbon: React.FC<WordRibbonProps> = ({
               }`}
             >
               <span>Ruler: {formatting.showRuler ? 'ON' : 'OFF'}</span>
+            </button>
+
+            {/* Direction Toggle */}
+            <button
+              type="button"
+              onClick={() => onChangeFormatting({ direction: formatting.direction === 'rtl' ? 'ltr' : 'rtl' })}
+              className="h-8 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-indigo-400 text-slate-700 dark:text-slate-300 font-semibold flex items-center gap-1.5 transition cursor-pointer shrink-0"
+              title="Toggle Document Direction (LTR/RTL)"
+            >
+              <span>{formatting.direction === 'rtl' ? 'RTL' : 'LTR'}</span>
             </button>
           </div>
         )}

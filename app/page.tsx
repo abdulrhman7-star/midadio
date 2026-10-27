@@ -63,7 +63,7 @@ const EMPTY_DOC: InitialDocData = {
 };
 
 function PlaygroundApp() {
-  const { t } = useLanguage();
+  const { t, direction } = useLanguage();
   const session = useSession();
   const savedDocs = useSavedDocsList();
   const [isDark, toggleTheme] = useTheme();
@@ -219,7 +219,7 @@ function PlaygroundApp() {
   // ... (rest of the component state and logic)
 
   // تصدير DOCX مع فحص الأرصدة
-  const handleExportDocx = async () => {
+  const handleExportDocx = async (direction: 'rtl' | 'ltr') => {
     if (session.credits <= 0) {
       setIsOutOfCreditsOpen(true);
       return;
@@ -244,7 +244,7 @@ function PlaygroundApp() {
         /[^a-zA-Z0-9_\-\u0600-\u06FF]/g,
         '_'
       )}.docx`;
-      await exportToDocx(markdown, filename);
+      await exportToDocx(markdown, filename, { direction });
 
       deductCredit();
 
@@ -366,7 +366,7 @@ function PlaygroundApp() {
       {/* Export Bar */}
       <ExportBar
         onOpenInsertModal={() => setIsInsertModalOpen(true)}
-        onExportDocx={handleExportDocx}
+        onExportDocx={() => handleExportDocx(direction)}
         onExportPdf={handleExportPdf}
         onCopyGoogleDocs={handleCopyGoogleDocs}
         onSaveDoc={handleSaveDoc}
@@ -401,7 +401,7 @@ function PlaygroundApp() {
           documentTitle={documentTitle}
           onChangeTitle={setDocumentTitle}
           onOpenInsertModal={() => setIsInsertModalOpen(true)}
-          onExportDocx={handleExportDocx}
+          onExportDocx={(dir) => handleExportDocx(dir)}
           onExportPdf={handleExportPdf}
           onCopyGoogleDocs={handleCopyGoogleDocs}
           onSaveDoc={handleSaveDoc}
