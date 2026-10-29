@@ -264,7 +264,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>((props, ref) => {
           }
         }
 
-        const html = markdownToHtml(markdown);
+        const html = markdownToHtml(markdown, formatting.direction);
         await saveUserDocument({
           id: currentDocId,
           title: documentTitle,
@@ -295,7 +295,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>((props, ref) => {
         setSaveStatus('error');
       }
     },
-    [currentDocId, documentTitle, markdown, session.id]
+    [currentDocId, documentTitle, markdown, session.id, formatting.direction]
   );
 
   // Debounced autosave
@@ -439,11 +439,11 @@ export const Editor = forwardRef<EditorHandle, EditorProps>((props, ref) => {
       const prevMd = history[newIdx];
       onChangeMarkdown(prevMd);
       if (paperEditableRef.current) {
-        paperEditableRef.current.innerHTML = markdownToHtml(prevMd);
+        paperEditableRef.current.innerHTML = markdownToHtml(prevMd, formatting.direction);
       }
       scheduleAutosave();
     }
-  }, [history, historyIndex, onChangeMarkdown, scheduleAutosave]);
+  }, [history, historyIndex, onChangeMarkdown, scheduleAutosave, formatting.direction]);
 
   const handleRedo = useCallback(() => {
     if (historyIndex < history.length - 1) {
@@ -452,22 +452,22 @@ export const Editor = forwardRef<EditorHandle, EditorProps>((props, ref) => {
       const nextMd = history[newIdx];
       onChangeMarkdown(nextMd);
       if (paperEditableRef.current) {
-        paperEditableRef.current.innerHTML = markdownToHtml(nextMd);
+        paperEditableRef.current.innerHTML = markdownToHtml(nextMd, formatting.direction);
       }
       scheduleAutosave();
     }
-  }, [history, historyIndex, onChangeMarkdown, scheduleAutosave]);
+  }, [history, historyIndex, onChangeMarkdown, scheduleAutosave, formatting.direction]);
 
   // Keep paper content in sync with markdown when not actively typing or syncing
   useEffect(() => {
     if (!isSyncingRef.current && !isTypingDirectlyRef.current && paperEditableRef.current) {
-      const rendered = markdownToHtml(markdown);
+      const rendered = markdownToHtml(markdown, formatting.direction);
       if (paperEditableRef.current.innerHTML !== rendered) {
         paperEditableRef.current.innerHTML = rendered;
       }
     }
     isSyncingRef.current = false;
-  }, [markdown]);
+  }, [markdown, formatting.direction]);
 
   // Sync paper DOM back into markdown
   const syncPaperToMarkdown = useCallback(() => {
@@ -988,6 +988,8 @@ export const Editor = forwardRef<EditorHandle, EditorProps>((props, ref) => {
                   initialBytes={docxBytes}
                   documentTitle={documentTitle}
                   isDark={isDark}
+                  formatting={formatting}
+                  onChangeFormatting={updateFormatting}
                   onChange={handleDocxChange}
                   onReady={() => {
                     setIsDirty(false);
@@ -1032,7 +1034,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>((props, ref) => {
                     onBlur={handlePaperBlur}
                     onMouseUp={saveSelection}
                     onKeyUp={saveSelection}
-                    dangerouslySetInnerHTML={{ __html: markdownToHtml(markdown) }}
+                    dangerouslySetInnerHTML={{ __html: markdownToHtml(markdown, formatting.direction) }}
                     className="relative z-10 prose dark:prose-invert max-w-none text-slate-900 dark:text-slate-100 focus:outline-none min-h-[350px] sm:min-h-[600px] lg:min-h-[750px]"
                   />
 
@@ -1094,7 +1096,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>((props, ref) => {
                   onBlur={handlePaperBlur}
                   onMouseUp={saveSelection}
                   onKeyUp={saveSelection}
-                  dangerouslySetInnerHTML={{ __html: markdownToHtml(markdown) }}
+                  dangerouslySetInnerHTML={{ __html: markdownToHtml(markdown, formatting.direction) }}
                   className="prose dark:prose-invert max-w-none text-slate-900 dark:text-slate-100 focus:outline-none min-h-[350px] sm:min-h-[600px]"
                 />
               ) : (

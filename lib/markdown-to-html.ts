@@ -1,6 +1,6 @@
 import { renderLatexHtml } from './latex-to-omml';
 
-export function markdownToHtml(markdown: string): string {
+export function markdownToHtml(markdown: string, direction: 'rtl' | 'ltr' = 'ltr'): string {
   if (!markdown) return '';
 
   const lines = markdown.split('\n');
@@ -29,7 +29,7 @@ export function markdownToHtml(markdown: string): string {
   const flushBlockquote = () => {
     if (inBlockquote) {
       const quoteText = blockquoteContent.join('<br/>');
-      htmlParts.push(`<blockquote class="border-l-4 border-indigo-500 pl-4 py-1.5 my-3 italic bg-indigo-50/50 dark:bg-indigo-950/30 rounded-r text-slate-700 dark:text-slate-300">${parseInlineMarkdown(quoteText)}</blockquote>`);
+      htmlParts.push(`<blockquote class="border-l-4 border-indigo-500 pl-4 py-1.5 my-3 italic bg-indigo-50/50 dark:bg-indigo-950/30 rounded-r text-slate-700 dark:text-slate-300 ${direction === 'rtl' ? 'text-right' : 'text-left'}" dir="${direction}">${parseInlineMarkdown(quoteText)}</blockquote>`);
       blockquoteContent = [];
       inBlockquote = false;
     }
@@ -37,7 +37,7 @@ export function markdownToHtml(markdown: string): string {
 
   const flushTable = () => {
     if (inTable && tableRows.length > 0) {
-      let tableHtml = '<div class="overflow-x-auto my-4"><table class="editor-table border-collapse w-full border border-slate-300 dark:border-slate-700 text-sm">';
+      let tableHtml = `<div class="overflow-x-auto my-4" dir="${direction}"><table class="editor-table border-collapse w-full border border-slate-300 dark:border-slate-700 text-sm ${direction === 'rtl' ? 'text-right' : 'text-left'}">`;
       
       // Header row
       const headers = tableRows[0];
@@ -100,7 +100,7 @@ export function markdownToHtml(markdown: string): string {
         inCodeBlock = false;
         const codeText = escapeHtml(codeBlockContent.join('\n'));
         htmlParts.push(
-          `<div class="my-4 rounded-lg border border-slate-800 bg-slate-950 text-slate-100 overflow-hidden shadow-sm">
+          `<div class="my-4 rounded-lg border border-slate-800 bg-slate-950 text-slate-100 overflow-hidden shadow-sm" dir="ltr">
             <div class="flex items-center justify-between px-4 py-1.5 bg-slate-900/90 border-b border-slate-800 text-xs font-mono text-slate-400">
               <span class="font-medium">${codeBlockLang}</span>
               <span>Code Block</span>
@@ -199,15 +199,10 @@ export function markdownToHtml(markdown: string): string {
     // 7. Headings
     if (trimmed.startsWith('#')) {
       flushList();
-      if (trimmed.startsWith('#### ')) {
-        htmlParts.push(`<h4 class="text-base font-semibold mt-4 mb-2 text-slate-800 dark:text-slate-100">${parseInlineMarkdown(trimmed.slice(5))}</h4>`);
-      } else if (trimmed.startsWith('### ')) {
-        htmlParts.push(`<h3 class="text-lg font-bold mt-5 mb-2 text-slate-900 dark:text-slate-50">${parseInlineMarkdown(trimmed.slice(4))}</h3>`);
-      } else if (trimmed.startsWith('## ')) {
-        htmlParts.push(`<h2 class="text-xl font-bold mt-6 mb-3 text-slate-900 dark:text-slate-50 pb-1 border-b border-slate-200 dark:border-slate-800">${parseInlineMarkdown(trimmed.slice(3))}</h2>`);
-      } else if (trimmed.startsWith('# ')) {
-        htmlParts.push(`<h1 class="text-2xl sm:text-3xl font-extrabold mt-6 mb-4 text-slate-900 dark:text-slate-50 tracking-tight">${parseInlineMarkdown(trimmed.slice(2))}</h1>`);
-      }
+      const hTag = trimmed.startsWith('#### ') ? 'h4' : trimmed.startsWith('### ') ? 'h3' : trimmed.startsWith('## ') ? 'h2' : 'h1';
+      const hContent = trimmed.replace(/^#+\s+/, '');
+      const hClasses = trimmed.startsWith('#### ') ? "text-base font-semibold mt-4 mb-2 text-slate-800 dark:text-slate-100" : trimmed.startsWith('### ') ? "text-lg font-bold mt-5 mb-2 text-slate-900 dark:text-slate-50" : trimmed.startsWith('## ') ? "text-xl font-bold mt-6 mb-3 text-slate-900 dark:text-slate-50 pb-1 border-b border-slate-200 dark:border-slate-800" : "text-2xl sm:text-3xl font-extrabold mt-6 mb-4 text-slate-900 dark:text-slate-50 tracking-tight";
+      htmlParts.push(`<${hTag} class="${hClasses} ${direction === 'rtl' ? 'text-right' : 'text-left'}" dir="${direction}">${parseInlineMarkdown(hContent)}</${hTag}>`);
       continue;
     }
 
@@ -219,12 +214,12 @@ export function markdownToHtml(markdown: string): string {
         flushList();
         inList = true;
         listType = 'ul';
-        htmlParts.push('<ul class="my-3 space-y-1.5 list-none pl-1">');
+        htmlParts.push(`<ul class="my-3 space-y-1.5 list-none pl-1 ${direction === 'rtl' ? 'text-right' : 'text-left'}" dir="${direction}">`);
       }
       const checked = taskMatch[2].toLowerCase() === 'x';
       const text = taskMatch[3];
       htmlParts.push(
-        `<li class="flex items-center space-x-2 space-x-reverse:false">
+        `<li class="flex items-center space-x-2 ${direction === 'rtl' ? 'flex-row-reverse space-x-reverse' : ''}">
           <input type="checkbox" ${checked ? 'checked' : ''} disabled class="h-4 w-4 rounded text-red-600 border-slate-300" />
           <span class="${checked ? 'line-through text-slate-400' : ''}">${parseInlineMarkdown(text)}</span>
         </li>`
@@ -239,7 +234,7 @@ export function markdownToHtml(markdown: string): string {
         flushList();
         inList = true;
         listType = 'ul';
-        htmlParts.push('<ul class="my-3 space-y-1.5 list-disc pl-6 text-slate-700 dark:text-slate-300">');
+        htmlParts.push(`<ul class="my-3 space-y-1.5 ${direction === 'rtl' ? 'list-disc pr-6' : 'list-disc pl-6'} text-slate-700 dark:text-slate-300 ${direction === 'rtl' ? 'text-right' : 'text-left'}" dir="${direction}">`);
       }
       htmlParts.push(`<li>${parseInlineMarkdown(ulMatch[2])}</li>`);
       continue;
@@ -252,7 +247,7 @@ export function markdownToHtml(markdown: string): string {
         flushList();
         inList = true;
         listType = 'ol';
-        htmlParts.push('<ol class="my-3 space-y-1.5 list-decimal pl-6 text-slate-700 dark:text-slate-300">');
+        htmlParts.push(`<ol class="my-3 space-y-1.5 ${direction === 'rtl' ? 'list-decimal pr-6' : 'list-decimal pl-6'} text-slate-700 dark:text-slate-300 ${direction === 'rtl' ? 'text-right' : 'text-left'}" dir="${direction}">`);
       }
       htmlParts.push(`<li>${parseInlineMarkdown(olMatch[2])}</li>`);
       continue;
@@ -260,7 +255,7 @@ export function markdownToHtml(markdown: string): string {
 
     // Standard Paragraph
     flushList();
-    htmlParts.push(`<p class="my-3 leading-relaxed text-slate-700 dark:text-slate-300">${parseInlineMarkdown(line)}</p>`);
+    htmlParts.push(`<p class="my-3 leading-relaxed text-slate-700 dark:text-slate-300 ${direction === 'rtl' ? 'text-right' : 'text-left'}" dir="${direction}">${parseInlineMarkdown(line)}</p>`);
   }
 
   flushList();

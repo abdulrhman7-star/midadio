@@ -11,6 +11,7 @@ import React, {
 import dynamic from 'next/dynamic';
 import '@docx-editor.dev/core/styles/editor.css';
 import { Loader2 } from 'lucide-react';
+import { WordFormattingOptions } from './WordRibbon';
 
 export interface EigenDocxEditorHandle {
   loadDocument: (source: Uint8Array | ArrayBuffer | 'blank') => void;
@@ -22,9 +23,11 @@ export interface EigenDocxEditorHandle {
 
 export interface EigenDocxEditorProps {
   initialBytes?: Uint8Array | ArrayBuffer | null;
+  formatting: WordFormattingOptions;
   documentTitle: string;
   isDark?: boolean;
   onChange?: () => void;
+  onChangeFormatting?: (opts: Partial<WordFormattingOptions>) => void;
   onReady?: () => void;
   className?: string;
 }
@@ -65,6 +68,8 @@ export const EigenDocxEditor = forwardRef<EigenDocxEditorHandle, EigenDocxEditor
   (
     {
       initialBytes,
+      formatting,
+      onChangeFormatting,
       documentTitle,
       isDark = false,
       onChange,
@@ -155,6 +160,16 @@ export const EigenDocxEditor = forwardRef<EigenDocxEditorHandle, EigenDocxEditor
 
     return (
       <div className={`w-full h-full min-h-[600px] flex flex-col ${className}`}>
+        <div className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800">
+           <span className="text-xs font-semibold text-slate-500">Document Direction:</span>
+           <button
+             type="button"
+             onClick={() => onChangeFormatting?.({ direction: formatting.direction === 'rtl' ? 'ltr' : 'rtl' })}
+             className="px-3 py-1 text-xs font-bold rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 hover:border-indigo-400 text-slate-700 dark:text-slate-300 transition cursor-pointer shadow-2xs"
+           >
+             {formatting.direction === 'rtl' ? 'RTL' : 'LTR'}
+           </button>
+        </div>
         <DynamicDocxEditor
           ref={editorComponentRef}
           document={currentSource}
